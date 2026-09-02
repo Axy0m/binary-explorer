@@ -1,0 +1,14 @@
+Pcap: Pcap  [@0 +44]
+  magic: u32 = 2712847316  [@0 +4]  // 0xA1B2C3D4 for a little-endian capture
+  versionMajor: u16 = 2  [@4 +2]  // major version (2)
+  versionMinor: u16 = 4  [@6 +2]  // minor version (4)
+  thisZone: i32 = 0  [@8 +4]  // GMT to local time correction (usually 0)
+  sigfigs: u32 = 0  [@12 +4]  // timestamp accuracy (usually 0)
+  snaplen: u32 = 65535  [@16 +4]  // max captured length per packet
+  network: PcapLinkType = Ethernet (1)  [@20 +4]  // link-layer header type
+  firstPacket: PcapRecord  [@24 +20]  // the first captured packet record
+    tsSec: u32 = 1564219904  [@24 +4]  // timestamp, seconds since the epoch
+    tsUsec: u32 = 12345  [@28 +4]  // timestamp, microseconds (or nanoseconds)
+    inclLen: u32 = 4  [@32 +4]  // number of bytes of this packet in the file
+    origLen: u32 = 60  [@36 +4]  // original packet length on the wire
+    data: bytes[inclLen] = de ad be ef  [@40 +4]  // captured packet bytes

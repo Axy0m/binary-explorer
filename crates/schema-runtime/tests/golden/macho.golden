@@ -1,0 +1,9 @@
+MachHeader64: MachHeader64  [@0 +32]
+  magic: u32 = 4277009103  [@0 +4]  // 0xFEEDFACF for a 64-bit Mach-O
+  cpuType: MachCpuType = X86_64 (16777223)  [@4 +4]  // target CPU type
+  cpuSubtype: u32 = 3  [@8 +4]  // target CPU subtype
+  fileType: MachFileType = Execute (2)  [@12 +4]  // type of Mach-O file
+  numCmds: u32 = 16  [@16 +4]  // number of load commands
+  sizeOfCmds: u32 = 1416  [@20 +4]  // total size of all load commands
+  flags: u32 = 2097285  [@24 +4]  // flags
+  reserved: u32 = 0  [@28 +4]  // reserved

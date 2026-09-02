@@ -186,13 +186,13 @@ struct BuiltinSchema {
 fn builtin_schema(app: AppHandle, format: String) -> Option<BuiltinSchema> {
     let embedded = match format.as_str() {
         "PNG" => Some((include_str!("../../../../schemas/png.schema"), "PNG", "be")),
-        "BMP" => Some((include_str!("../../../../schemas/bmp.schema"), "BMP", "le")),
-        "WAV" => Some((include_str!("../../../../schemas/wav.schema"), "WAV", "le")),
         "GZIP" => Some((include_str!("../../../../schemas/gzip.schema"), "Gzip", "le")),
         "ELF" => Some((include_str!("../../../../schemas/elf.schema"), "Elf64", "le")),
         "ZIP" => Some((include_str!("../../../../schemas/zip.schema"), "ZipLocalFileHeader", "le")),
         "PE" => Some((include_str!("../../../../schemas/pe.schema"), "PE", "le")),
         "SQLite" => Some((include_str!("../../../../schemas/sqlite.schema"), "SqliteHeader", "be")),
+        "Mach-O" => Some((include_str!("../../../../schemas/macho.schema"), "MachHeader64", "le")),
+        "PCAP" => Some((include_str!("../../../../schemas/pcap.schema"), "Pcap", "le")),
         _ => None,
     };
     if let Some((text, entry, endian)) = embedded {
@@ -606,13 +606,13 @@ fn save_file_as(path: String, state: State<AppState>) -> Result<FileInfo, String
 /// Schemas shipped with the app. Each carries its own `// @…` metadata header.
 const BUILTINS: &[(&str, &str)] = &[
     ("png", include_str!("../../../../schemas/png.schema")),
-    ("bmp", include_str!("../../../../schemas/bmp.schema")),
-    ("wav", include_str!("../../../../schemas/wav.schema")),
     ("gzip", include_str!("../../../../schemas/gzip.schema")),
     ("elf", include_str!("../../../../schemas/elf.schema")),
     ("zip", include_str!("../../../../schemas/zip.schema")),
     ("pe", include_str!("../../../../schemas/pe.schema")),
     ("sqlite", include_str!("../../../../schemas/sqlite.schema")),
+    ("macho", include_str!("../../../../schemas/macho.schema")),
+    ("pcap", include_str!("../../../../schemas/pcap.schema")),
 ];
 
 /// One entry in the schema library, as listed for the UI.

@@ -27,13 +27,13 @@ use schema_runtime::{parse, Endian, FieldNode, Value};
 // --- Built-in schema sources (the exact files the app bundles) -------------
 
 const PNG: &str = include_str!("../../../schemas/png.schema");
-const BMP: &str = include_str!("../../../schemas/bmp.schema");
-const WAV: &str = include_str!("../../../schemas/wav.schema");
 const GZIP: &str = include_str!("../../../schemas/gzip.schema");
 const ZIP: &str = include_str!("../../../schemas/zip.schema");
 const SQLITE: &str = include_str!("../../../schemas/sqlite.schema");
 const ELF: &str = include_str!("../../../schemas/elf.schema");
 const PE: &str = include_str!("../../../schemas/pe.schema");
+const MACHO: &str = include_str!("../../../schemas/macho.schema");
+const PCAP: &str = include_str!("../../../schemas/pcap.schema");
 
 // --- Tiny endian-aware byte builder ----------------------------------------
 
@@ -211,49 +211,42 @@ fn golden_png() {
 }
 
 #[test]
-fn golden_bmp() {
-    // 24bpp 1x1: file header (14 bytes) + BITMAPINFOHEADER (40) then 4 pixel
-    // bytes at dataOffset = 54 that `firstPixels at dataOffset` points to.
+fn golden_macho() {
+    // 64-bit Mach-O header: magic 0xFEEDFACF, an x86_64 executable. Exercises
+    // the enum-typed cpuType/fileType fields.
     let bytes = B::new()
-        .ascii("BM") // signature
-        .u32le(58) // fileSize
-        .u16le(0) // reserved1
-        .u16le(0) // reserved2
-        .u32le(54) // dataOffset (bfOffBits)
-        // BITMAPINFOHEADER
-        .u32le(40) // headerSize
-        .i32le(1) // width
-        .i32le(1) // height
-        .u16le(1) // planes
-        .u16le(24) // bitCount
-        .u32le(0) // compression
-        .u32le(4) // imageSize
-        .i32le(2835) // xPixelsPerMeter
-        .i32le(2835) // yPixelsPerMeter
-        .u32le(0) // colorsUsed
-        .u32le(0) // colorsImportant
-        // pixel array at offset 54
-        .raw(&[0xFF, 0x00, 0x00, 0x00])
+        .u32le(0xFEED_FACF) // magic
+        .u32le(16777223) // cpuType -> X86_64
+        .u32le(3) // cpuSubtype
+        .u32le(2) // fileType -> Execute
+        .u32le(16) // numCmds
+        .u32le(1416) // sizeOfCmds
+        .u32le(0x0020_0085) // flags
+        .u32le(0) // reserved
         .build();
-    golden("bmp", BMP, "BMP", Endian::Little, bytes);
+    golden("macho", MACHO, "MachHeader64", Endian::Little, bytes);
 }
 
 #[test]
-fn golden_wav() {
+fn golden_pcap() {
+    // libpcap global header (little-endian, microsecond) + one Ethernet packet
+    // record. Exercises the `bytes[inclLen]` field-driven length.
     let bytes = B::new()
-        .ascii("RIFF")
-        .u32le(36) // fileSize
-        .ascii("WAVE")
-        .ascii("fmt ")
-        .u32le(16) // fmtSize
-        .u16le(1) // audioFormat (PCM)
-        .u16le(2) // channels
-        .u32le(44100) // sampleRate
-        .u32le(176400) // byteRate
-        .u16le(4) // blockAlign
-        .u16le(16) // bitsPerSample
+        .u32le(0xA1B2_C3D4) // magic
+        .u16le(2) // versionMajor
+        .u16le(4) // versionMinor
+        .i32le(0) // thisZone
+        .u32le(0) // sigfigs
+        .u32le(65535) // snaplen
+        .u32le(1) // network -> Ethernet
+        // first packet record
+        .u32le(0x5D3C_1A00) // tsSec
+        .u32le(12345) // tsUsec
+        .u32le(4) // inclLen
+        .u32le(60) // origLen
+        .raw(&[0xDE, 0xAD, 0xBE, 0xEF]) // captured bytes
         .build();
-    golden("wav", WAV, "WAV", Endian::Little, bytes);
+    golden("pcap", PCAP, "Pcap", Endian::Little, bytes);
 }
 
 #[test]

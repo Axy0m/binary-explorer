@@ -285,13 +285,13 @@ fn bare_hex_prefix_is_rejected() {
 fn all_bundled_schemas_parse() {
     let bundled: &[(&str, &str)] = &[
         ("png", include_str!("../../../schemas/png.schema")),
-        ("bmp", include_str!("../../../schemas/bmp.schema")),
-        ("wav", include_str!("../../../schemas/wav.schema")),
         ("gzip", include_str!("../../../schemas/gzip.schema")),
         ("elf", include_str!("../../../schemas/elf.schema")),
         ("zip", include_str!("../../../schemas/zip.schema")),
         ("pe", include_str!("../../../schemas/pe.schema")),
         ("sqlite", include_str!("../../../schemas/sqlite.schema")),
+        ("macho", include_str!("../../../schemas/macho.schema")),
+        ("pcap", include_str!("../../../schemas/pcap.schema")),
     ];
     for (name, text) in bundled {
         parse(text).unwrap_or_else(|e| panic!("bundled schema {name} failed to parse: {e:?}"));

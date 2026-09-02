@@ -1,0 +1,31 @@
+// @name PCAP capture
+// @entry Pcap
+// @endian le
+// @desc libpcap / tcpdump capture: global header + first packet record
+enum PcapLinkType : u32 {
+    Null      = 0
+    Ethernet  = 1
+    Ppp       = 9
+    Raw       = 101
+    Ieee80211 = 105
+    LinuxSll  = 113
+}
+
+struct PcapRecord {
+    tsSec   u32           "timestamp, seconds since the epoch"
+    tsUsec  u32           "timestamp, microseconds (or nanoseconds)"
+    inclLen u32           "number of bytes of this packet in the file"
+    origLen u32           "original packet length on the wire"
+    data    bytes[inclLen] "captured packet bytes"
+}
+
+struct Pcap {
+    magic        u32          "0xA1B2C3D4 for a little-endian capture"
+    versionMajor u16          "major version (2)"
+    versionMinor u16          "minor version (4)"
+    thisZone     i32          "GMT to local time correction (usually 0)"
+    sigfigs      u32          "timestamp accuracy (usually 0)"
+    snaplen      u32          "max captured length per packet"
+    network      PcapLinkType "link-layer header type"
+    firstPacket  PcapRecord   "the first captured packet record"
+}

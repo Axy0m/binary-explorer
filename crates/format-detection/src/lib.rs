@@ -89,6 +89,22 @@ const SIGNATURES: &[Signature] = &[
         parts: &[(0, b"MZ")],
     },
     Signature {
+        format: "Mach-O",
+        extension: "dylib",
+        description: "Mach-O executable (64-bit, macOS/iOS)",
+        confidence: 100,
+        // 0xFEEDFACF stored little-endian.
+        parts: &[(0, &[0xCF, 0xFA, 0xED, 0xFE])],
+    },
+    Signature {
+        format: "PCAP",
+        extension: "pcap",
+        description: "libpcap / tcpdump packet capture",
+        confidence: 100,
+        // 0xA1B2C3D4 stored little-endian (microsecond timestamps).
+        parts: &[(0, &[0xD4, 0xC3, 0xB2, 0xA1])],
+    },
+    Signature {
         format: "ZIP",
         extension: "zip",
         description: "ZIP archive (also .jar/.docx/.xlsx/.apk)",

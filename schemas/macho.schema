@@ -1,0 +1,30 @@
+// @name Mach-O executable
+// @entry MachHeader64
+// @endian le
+// @desc 64-bit Mach-O header (macOS / iOS executables and libraries)
+enum MachCpuType : u32 {
+    X86     = 7
+    X86_64  = 16777223
+    Arm     = 12
+    Arm64   = 16777228
+    PowerPC = 18
+}
+
+enum MachFileType : u32 {
+    Object   = 1
+    Execute  = 2
+    Dylib    = 6
+    Dylinker = 7
+    Bundle   = 8
+}
+
+struct MachHeader64 {
+    magic      u32          "0xFEEDFACF for a 64-bit Mach-O"
+    cpuType    MachCpuType  "target CPU type"
+    cpuSubtype u32          "target CPU subtype"
+    fileType   MachFileType "type of Mach-O file"
+    numCmds    u32          "number of load commands"
+    sizeOfCmds u32          "total size of all load commands"
+    flags      u32          "flags"
+    reserved   u32          "reserved"
+}
