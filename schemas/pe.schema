@@ -1,0 +1,187 @@
+// @name PE executable
+// @entry PE
+// @endian le
+// @desc Windows PE/COFF (.exe/.dll): DOS stub → e_lfanew pointer → PE header,
+//       COFF file header, optional header (PE32 and PE32+ via conditionals),
+//       data directories, and the section table. Always little-endian.
+
+enum PeMachine : u16 {
+    Unknown = 0x0
+    I386    = 0x14c
+    ARM     = 0x1c0
+    ARMNT   = 0x1c4
+    IA64    = 0x200
+    AMD64   = 0x8664
+    ARM64   = 0xaa64
+    RISCV32 = 0x5032
+    RISCV64 = 0x5064
+}
+
+// COFF file-header Characteristics.
+bitfield PeCharacteristics : u16 {
+    relocsStripped     0
+    executableImage    1
+    lineNumsStripped   2
+    localSymsStripped  3
+    largeAddressAware  5
+    machine32Bit       8
+    debugStripped      9
+    system             12
+    dll                13
+    upSystemOnly       14
+}
+
+enum PeMagic : u16 {
+    PE32     = 0x10b
+    PE32Plus = 0x20b
+    ROM      = 0x107
+}
+
+enum PeSubsystem : u16 {
+    Unknown       = 0
+    Native        = 1
+    WindowsGui    = 2
+    WindowsCui    = 3
+    Os2Cui        = 5
+    PosixCui      = 7
+    WindowsCeGui  = 9
+    EfiApplication = 10
+    EfiBootDriver = 11
+    EfiRuntimeDriver = 12
+    EfiRom        = 13
+    Xbox          = 14
+    WindowsBoot   = 16
+}
+
+bitfield PeDllCharacteristics : u16 {
+    highEntropyVa       5
+    dynamicBase         6
+    forceIntegrity      7
+    nxCompat            8
+    noIsolation         9
+    noSeh               10
+    noBind              11
+    appContainer        12
+    wdmDriver           13
+    guardCf             14
+    terminalServerAware 15
+}
+
+bitfield PeSectionFlags : u32 {
+    code            5
+    initializedData 6
+    uninitData      7
+    discardable     25
+    notCached       26
+    notPaged        27
+    shared          28
+    execute         29
+    read            30
+    write           31
+}
+
+struct DataDirectory {
+    virtualAddress u32 "RVA of the table"
+    size           u32 "size in bytes"
+}
+
+struct SectionHeader {
+    name                 char[8]        "section name (NUL-padded)"
+    virtualSize          u32            "size in memory"
+    virtualAddress       u32            "RVA of the section"
+    sizeOfRawData        u32            "size on disk"
+    pointerToRawData     u32            "file offset of the section data"
+    pointerToRelocations u32            "file offset of relocations"
+    pointerToLinenumbers u32            "file offset of line numbers (deprecated)"
+    numberOfRelocations  u16            "number of relocations"
+    numberOfLinenumbers  u16            "number of line numbers"
+    characteristics      PeSectionFlags "section flags"
+}
+
+struct PeOptionalHeader {
+    magic                   PeMagic "PE32 (0x10b) or PE32+ (0x20b)"
+    majorLinkerVersion      u8
+    minorLinkerVersion      u8
+    sizeOfCode              u32
+    sizeOfInitializedData   u32
+    sizeOfUninitializedData u32
+    addressOfEntryPoint     u32     "RVA of the entry point"
+    baseOfCode              u32     "RVA of the code section"
+    // PE32 has an extra baseOfData here; PE32+ folds it into a 64-bit imageBase.
+    baseOfData  u32 if magic == 0x10b "RVA of the data (PE32 only)"
+    imageBase32 u32 if magic == 0x10b "preferred load address (PE32)"
+    imageBase64 u64 if magic == 0x20b "preferred load address (PE32+)"
+
+    sectionAlignment u32
+    fileAlignment    u32
+    majorOsVersion   u16
+    minorOsVersion   u16
+    majorImageVersion u16
+    minorImageVersion u16
+    majorSubsystemVersion u16
+    minorSubsystemVersion u16
+    win32VersionValue u32
+    sizeOfImage      u32
+    sizeOfHeaders    u32
+    checkSum         u32
+    subsystem        PeSubsystem
+    dllCharacteristics PeDllCharacteristics
+
+    // These four are 32-bit in PE32 and 64-bit in PE32+.
+    stackReserve32 u32 if magic == 0x10b
+    stackCommit32  u32 if magic == 0x10b
+    heapReserve32  u32 if magic == 0x10b
+    heapCommit32   u32 if magic == 0x10b
+    stackReserve64 u64 if magic == 0x20b
+    stackCommit64  u64 if magic == 0x20b
+    heapReserve64  u64 if magic == 0x20b
+    heapCommit64   u64 if magic == 0x20b
+
+    loaderFlags        u32
+    numberOfRvaAndSizes u32 "number of data directory entries (usually 16)"
+    dataDirectories    DataDirectory[numberOfRvaAndSizes] "data directory table"
+}
+
+struct PeHeader {
+    signature bytes[4] "PE signature (50 45 00 00)"
+    // --- COFF file header (inlined so its counts are in scope below) ---
+    machine              PeMachine
+    numberOfSections     u16
+    timeDateStamp        u32 "creation time (unix)"
+    pointerToSymbolTable u32
+    numberOfSymbols      u32
+    sizeOfOptionalHeader u16 "size of the optional header that follows"
+    characteristics      PeCharacteristics
+    // --- Optional header (PE32 / PE32+) ---
+    optional PeOptionalHeader
+    // The section table starts right after the optional header. Place it by
+    // the file's own sizeOfOptionalHeader (4 sig + 20 COFF = 24), relative to
+    // this PE header, so we don't depend on parsing every optional-header byte.
+    sectionTableOffset = 24 + sizeOfOptionalHeader
+    sections at +sectionTableOffset SectionHeader[numberOfSections] "section table"
+}
+
+struct PE {
+    // --- DOS header (IMAGE_DOS_HEADER, 64 bytes) ---
+    magic            char[2]  "\"MZ\""
+    lastPageBytes    u16
+    pages            u16
+    relocations      u16
+    headerParagraphs u16
+    minAlloc         u16
+    maxAlloc         u16
+    initialSS        u16
+    initialSP        u16
+    checksum         u16
+    initialIP        u16
+    initialCS        u16
+    relocTableOffset u16
+    overlayNumber    u16
+    reserved         bytes[8]
+    oemId            u16
+    oemInfo          u16
+    reserved2        bytes[20]
+    lfanew           u32 "e_lfanew — file offset of the PE header"
+    // Follow e_lfanew to the real PE header (no bytes consumed here).
+    peHeader at lfanew PeHeader "PE header (at e_lfanew)"
+}

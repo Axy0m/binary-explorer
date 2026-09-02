@@ -1,0 +1,27 @@
+// @name GZIP member
+// @entry Gzip
+// @endian le
+// @desc Full gzip member header — flags bitfield + conditional name/comment/hcrc
+bitfield GzipFlags : u8 {
+    text    0   // FTEXT   — payload is probably ASCII text
+    hcrc    1   // FHCRC   — a CRC16 of the header follows
+    extra   2   // FEXTRA  — an extra field is present
+    name    3   // FNAME   — an original file name is present
+    comment 4   // FCOMMENT — a comment is present
+}
+
+struct Gzip {
+    magic    bytes[2]   "gzip magic 1F 8B"
+    method   u8         "compression method (8 = deflate)"
+    flags    GzipFlags  "header flags"
+    mtime    u32        "modification time (unix)"
+    xfl      u8         "extra flags"
+    os       u8         "operating system"
+    // Optional trailing header fields, each present only when its flag bit is
+    // set (and, for `extra`, sized by the XLEN that precedes it):
+    extraLen u16              if flags.extra   "XLEN — extra-field length"
+    extra    bytes[extraLen]  if flags.extra   "extra field bytes"
+    name     cstring          if flags.name    "original file name (NUL-terminated)"
+    comment  cstring          if flags.comment "file comment (NUL-terminated)"
+    hcrc     u16              if flags.hcrc    "header CRC16"
+}

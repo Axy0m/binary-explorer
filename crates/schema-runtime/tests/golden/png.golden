@@ -1,0 +1,25 @@
+PNG: PNG  [@0 +61]
+  signature: bytes[8] = 89 50 4e 47 0d 0a 1a 0a  [@0 +8]  // PNG magic 89 50 4E 47 0D 0A 1A 0A
+  chunks: repeat PngChunk  [@8 +53]
+    0: PngChunk  [@8 +25]
+      length: u32 = 13  [@8 +4]  // chunk data length
+      chunkType: char[4] = "IHDR"  [@12 +4]  // chunk type tag
+      data: PngIhdrData  [@16 +13]
+        width: u32 = 1  [@16 +4]  // image width in pixels
+        height: u32 = 1  [@20 +4]  // image height in pixels
+        bitDepth: u8 = 8  [@24 +1]  // bits per sample
+        colorType: PngColorType = RGBA (6)  [@25 +1]  // color model
+        compression: u8 = 0  [@26 +1]  // compression method (0 = deflate)
+        filter: u8 = 0  [@27 +1]  // filter method (0)
+        interlace: PngInterlace = None (0)  [@28 +1]  // interlace method
+      crc: u32 = 305419896  [@29 +4]  // CRC32 of chunk type + data
+    1: PngChunk  [@33 +16]
+      length: u32 = 4  [@33 +4]  // chunk data length
+      chunkType: char[4] = "IDAT"  [@37 +4]  // chunk type tag
+      data: bytes[length] = de ad be ef  [@41 +4]
+      crc: u32 = 2596069104  [@45 +4]  // CRC32 of chunk type + data
+    2: PngChunk  [@49 +12]
+      length: u32 = 0  [@49 +4]  // chunk data length
+      chunkType: char[4] = "IEND"  [@53 +4]  // chunk type tag
+      data: bytes[length]  [@57 +0]
+      crc: u32 = 2923585666  [@57 +4]  // CRC32 of chunk type + data

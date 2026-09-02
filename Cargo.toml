@@ -1,0 +1,35 @@
+# Cargo workspace root for Binary Explorer.
+# Rust crates live under crates/; the Tauri app is a workspace member under apps/desktop/src-tauri.
+[workspace]
+resolver = "2"
+members = [
+    "crates/binary-reader",
+    "crates/schema",
+    "crates/schema-parser",
+    "crates/schema-runtime",
+    "crates/format-detection",
+    "crates/analysis",
+    "crates/search",
+    "crates/file-editing",
+    "crates/schema-library",
+    "crates/plugin-host",
+    "apps/desktop/src-tauri",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+# Proprietary, closed-source: the app ships as signed installers; the source is
+# not distributed and grants no license. See the LICENSE file.
+license = "LicenseRef-Proprietary"
+authors = ["Majd Shaheen"]
+
+[workspace.dependencies]
+binary-reader = { path = "crates/binary-reader" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Optimize release builds; the core engine is performance-sensitive.
+[profile.release]
+lto = true
+codegen-units = 1

@@ -1,0 +1,52 @@
+Elf64: Elf64  [@0 +64]
+  ident: ElfIdent  [@0 +16]  // e_ident (16 bytes)
+    magic: bytes[4] = 7f 45 4c 46  [@0 +4]  // 0x7F 'E' 'L' 'F'
+    class: ElfClass = ELF64 (2)  [@4 +1]  // 1 = 32-bit, 2 = 64-bit
+    data: ElfData = LittleEndian (1)  [@5 +1]  // 1 = little-endian, 2 = big-endian
+    version: u8 = 1  [@6 +1]  // ELF identification version (1)
+    osabi: ElfOsAbi = SystemV (0)  [@7 +1]  // target OS ABI
+    abiVersion: u8 = 0  [@8 +1]  // ABI version
+    pad: bytes[7] = 00 00 00 00 00 00 00  [@9 +7]  // padding
+  type: ElfType = Executable (2)  [@16 +2]  // object file type
+  machine: ElfMachine = X86_64 (62)  [@18 +2]  // target architecture
+  version: u32 = 1  [@20 +4]  // object file version (1)
+  entry: u64 = 4198560  [@24 +8]  // entry point virtual address
+  phoff: u64 = 64  [@32 +8]  // program header table file offset
+  shoff: u64 = 120  [@40 +8]  // section header table file offset
+  flags: u32 = 0  [@48 +4]  // processor-specific flags
+  ehsize: u16 = 64  [@52 +2]  // ELF header size (64)
+  phentsize: u16 = 56  [@54 +2]  // size of one program header entry (56)
+  phnum: u16 = 1  [@56 +2]  // number of program header entries
+  shentsize: u16 = 64  [@58 +2]  // size of one section header entry (64)
+  shnum: u16 = 1  [@60 +2]  // number of section header entries
+  shstrndx: u16 = 0  [@62 +2]  // section header index of the .shstrtab
+  programHeaders: ProgramHeader[phnum]  [@64 +56]  // program header table (at e_phoff)
+    0: ProgramHeader  [@64 +56]
+      type: ElfProgType = Load (1)  [@64 +4]  // segment type
+      flags: ElfProgFlags  [@68 +4]  // segment permissions
+        execute: bit 0 = true  [@68 +4]
+        write: bit 1 = false  [@68 +4]
+        read: bit 2 = true  [@68 +4]
+      offset: u64 = 0  [@72 +8]  // file offset of segment
+      vaddr: u64 = 4194304  [@80 +8]  // virtual address in memory
+      paddr: u64 = 4194304  [@88 +8]  // physical address (where relevant)
+      filesz: u64 = 512  [@96 +8]  // size in file
+      memsz: u64 = 512  [@104 +8]  // size in memory
+      align: u64 = 4096  [@112 +8]  // alignment
+  sectionHeaders: SectionHeader[shnum]  [@120 +64]  // section header table (at e_shoff)
+    0: SectionHeader  [@120 +64]
+      name: u32 = 1  [@120 +4]  // offset into .shstrtab for the name
+      type: ElfSectType = Progbits (1)  [@124 +4]  // section type
+      flags: ElfSectFlags  [@128 +8]  // section attributes
+        write: bit 0 = false  [@128 +8]
+        alloc: bit 1 = true  [@128 +8]
+        execinstr: bit 2 = true  [@128 +8]
+        merge: bit 4 = false  [@128 +8]
+        strings: bit 5 = false  [@128 +8]
+      addr: u64 = 4198400  [@136 +8]  // virtual address
+      offset: u64 = 4096  [@144 +8]  // file offset of section data
+      size: u64 = 420  [@152 +8]  // section size in bytes
+      link: u32 = 0  [@160 +4]  // link to another section
+      info: u32 = 0  [@164 +4]  // extra info
+      addralign: u64 = 16  [@168 +8]  // alignment
+      entsize: u64 = 0  [@176 +8]  // entry size, if the section holds a table

@@ -1,0 +1,87 @@
+// WebAssembly binary module — a real-world format built entirely on LEB128
+// varints. Every section size, vector count, and index below is a `varint`.
+//
+// Two entry points. GzModule is first, so it is the DEFAULT entry (the app
+// starts from the first struct when the entry box is empty):
+//   GzModule — for the gzip'd module (module.wasm.gz): inflate, then parse the
+//              result as a WASM Module. The headline demo; works with no entry.
+//   Module   — for the RAW module (module.wasm): set the entry field to Module.
+//
+//   cargo run -p schema-runtime --example dump -- \
+//       demos/wasm/wasm.schema demos/wasm/module.wasm.gz GzModule le
+//   cargo run -p schema-runtime --example dump -- \
+//       demos/wasm/wasm.schema demos/wasm/module.wasm    Module   le
+
+// Both shipped features at once: read the whole gzip stream, inflate it, and
+// re-parse the inflated bytes as a WASM Module. Default entry (first struct).
+struct GzModule {
+    module bytes[*] decode gunzip as Module   "gzip stream -> inflate -> parse as WASM"
+}
+
+struct Module {
+    magic    bytes[4]             "WebAssembly magic: 00 61 73 6d (\\0asm)"
+    version  u32                  "binary format version (1)"
+    sections repeat Section       "sections run to end of file"
+}
+
+// Each section is a 1-byte id, a varint byte-length, then that many bytes of
+// payload — decoded into a known shape by id, or left raw if unrecognized.
+struct Section {
+    id   u8
+    size varint                   "section length (LEB128)"
+    body match id {
+        1  => TypeSection
+        3  => FunctionSection
+        7  => ExportSection
+        10 => CodeSection
+        default => bytes[size]
+    }
+}
+
+// --- Type section: the function signatures --------------------------------
+
+struct TypeSection {
+    count varint                  "number of function types"
+    types FuncType[count]
+}
+
+struct FuncType {
+    form     u8                   "0x60 = func"
+    nparams  varint
+    params   u8[nparams]          "value types: 0x7f=i32 0x7e=i64 0x7d=f32 0x7c=f64"
+    nresults varint
+    results  u8[nresults]
+}
+
+// --- Function section: which type each function uses ----------------------
+
+struct FunctionSection {
+    count    varint               "number of functions"
+    typeidx  varint[count]        "type index per function"
+}
+
+// --- Export section: named entries exposed to the host --------------------
+
+struct ExportSection {
+    count   varint                "number of exports"
+    exports Export[count]
+}
+
+struct Export {
+    namelen varint
+    name    string[namelen]
+    kind    u8                    "0=func 1=table 2=mem 3=global"
+    index   varint                "index into the kind's space"
+}
+
+// --- Code section: the function bodies ------------------------------------
+
+struct CodeSection {
+    count varint                  "number of function bodies"
+    funcs FuncBody[count]
+}
+
+struct FuncBody {
+    bodysize varint               "byte length of this body"
+    body     bytes[bodysize]      "locals + instructions + 0x0b end"
+}

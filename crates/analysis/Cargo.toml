@@ -1,0 +1,10 @@
+[package]
+name = "analysis"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Heuristic analysis of unknown bytes: string scanning + 'what could this be' guesses (plan sections 11-12)."
+
+[dependencies]
+serde = { workspace = true }

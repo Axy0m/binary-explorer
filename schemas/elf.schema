@@ -1,0 +1,155 @@
+// @name ELF64 executable
+// @entry Elf64
+// @endian le
+// @desc ELF64 header + program/section header tables (little-endian).
+//       Covers the common case (x86-64, AArch64, RISC-V). For a big-endian
+//       or 32-bit ELF, switch endianness / see e_ident.class below.
+
+enum ElfClass : u8 {
+    ELF32 = 1
+    ELF64 = 2
+}
+
+enum ElfData : u8 {
+    LittleEndian = 1
+    BigEndian    = 2
+}
+
+enum ElfOsAbi : u8 {
+    SystemV  = 0
+    HPUX     = 1
+    NetBSD   = 2
+    Linux    = 3
+    GNUHurd  = 4
+    Solaris  = 6
+    AIX      = 7
+    FreeBSD  = 9
+    OpenBSD  = 12
+}
+
+enum ElfType : u16 {
+    None        = 0
+    Relocatable = 1
+    Executable  = 2
+    SharedObject = 3
+    Core        = 4
+}
+
+enum ElfMachine : u16 {
+    None    = 0
+    Sparc   = 2
+    X86     = 3
+    MIPS    = 8
+    PowerPC = 20
+    PowerPC64 = 21
+    ARM     = 40
+    SuperH  = 42
+    IA64    = 50
+    X86_64  = 62
+    AArch64 = 183
+    RISCV   = 243
+}
+
+// The 16-byte e_ident, broken out into its named bytes.
+struct ElfIdent {
+    magic      bytes[4] "0x7F 'E' 'L' 'F'"
+    class      ElfClass "1 = 32-bit, 2 = 64-bit"
+    data       ElfData  "1 = little-endian, 2 = big-endian"
+    version    u8       "ELF identification version (1)"
+    osabi      ElfOsAbi "target OS ABI"
+    abiVersion u8       "ABI version"
+    pad        bytes[7] "padding"
+}
+
+// One entry in the program header table (Elf64_Phdr, 56 bytes).
+enum ElfProgType : u32 {
+    Null        = 0
+    Load        = 1
+    Dynamic     = 2
+    Interp      = 3
+    Note        = 4
+    Shlib       = 5
+    Phdr        = 6
+    Tls         = 7
+    GnuEhFrame  = 0x6474e550
+    GnuStack    = 0x6474e551
+    GnuRelro    = 0x6474e552
+}
+
+bitfield ElfProgFlags : u32 {
+    execute 0
+    write   1
+    read    2
+}
+
+struct ProgramHeader {
+    type   ElfProgType  "segment type"
+    flags  ElfProgFlags "segment permissions"
+    offset u64          "file offset of segment"
+    vaddr  u64          "virtual address in memory"
+    paddr  u64          "physical address (where relevant)"
+    filesz u64          "size in file"
+    memsz  u64          "size in memory"
+    align  u64          "alignment"
+}
+
+// One entry in the section header table (Elf64_Shdr, 64 bytes).
+enum ElfSectType : u32 {
+    Null     = 0
+    Progbits = 1
+    Symtab   = 2
+    Strtab   = 3
+    Rela     = 4
+    Hash     = 5
+    Dynamic  = 6
+    Note     = 7
+    Nobits   = 8
+    Rel      = 9
+    Shlib    = 10
+    Dynsym   = 11
+    InitArray = 14
+    FiniArray = 15
+}
+
+bitfield ElfSectFlags : u64 {
+    write     0
+    alloc     1
+    execinstr 2
+    merge     4
+    strings   5
+}
+
+struct SectionHeader {
+    name      u32          "offset into .shstrtab for the name"
+    type      ElfSectType  "section type"
+    flags     ElfSectFlags "section attributes"
+    addr      u64          "virtual address"
+    offset    u64          "file offset of section data"
+    size      u64          "section size in bytes"
+    link      u32          "link to another section"
+    info      u32          "extra info"
+    addralign u64          "alignment"
+    entsize   u64          "entry size, if the section holds a table"
+}
+
+struct Elf64 {
+    ident     ElfIdent   "e_ident (16 bytes)"
+    type      ElfType    "object file type"
+    machine   ElfMachine "target architecture"
+    version   u32        "object file version (1)"
+    entry     u64        "entry point virtual address"
+    phoff     u64        "program header table file offset"
+    shoff     u64        "section header table file offset"
+    flags     u32        "processor-specific flags"
+    ehsize    u16        "ELF header size (64)"
+    phentsize u16        "size of one program header entry (56)"
+    phnum     u16        "number of program header entries"
+    shentsize u16        "size of one section header entry (64)"
+    shnum     u16        "number of section header entries"
+    shstrndx  u16        "section header index of the .shstrtab"
+
+    // Follow the table offsets. These read at phoff/shoff and consume no
+    // bytes in the header's own layout.
+    programHeaders at phoff ProgramHeader[phnum] "program header table (at e_phoff)"
+    sectionHeaders at shoff SectionHeader[shnum] "section header table (at e_shoff)"
+}

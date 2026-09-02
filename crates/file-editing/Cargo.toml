@@ -1,0 +1,9 @@
+[package]
+name = "file-editing"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+binary-reader.workspace = true

@@ -1,0 +1,11 @@
+[package]
+name = "plugin-host"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Declarative format plugins: parse a plugin manifest and match its detection rules (Phase A)."
+
+[dependencies]
+serde = { workspace = true }
+toml = "0.8"

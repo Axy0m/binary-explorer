@@ -1,0 +1,19 @@
+[package]
+name = "schema-runtime"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Executes a schema::Schema against a binary-reader to produce a FieldNode tree."
+
+[dependencies]
+schema = { path = "../schema" }
+binary-reader = { workspace = true }
+serde = { workspace = true }
+thiserror = "2"
+# Pure-Rust (miniz_oxide) inflate backend — no system zlib, keeps builds portable.
+flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
+
+[dev-dependencies]
+flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
+schema-parser = { path = "../schema-parser" }

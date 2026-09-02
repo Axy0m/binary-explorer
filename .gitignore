@@ -1,0 +1,26 @@
+# Rust
+/target
+**/target
+
+# Node
+node_modules
+dist
+.vite
+
+# Tauri build output
+apps/desktop/src-tauri/target
+apps/desktop/src-tauri/gen
+
+# Local-only docs (not for the repo)
+docs/positioning.md
+docs/manual-test-plan.md
+
+# Editor / OS
+.DS_Store
+Thumbs.db
+.idea
+.vscode/*
+!.vscode/extensions.json
+
+# Local test fixtures / sample files (generated, not part of the app)
+samples/

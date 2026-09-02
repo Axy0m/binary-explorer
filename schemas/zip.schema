@@ -1,0 +1,47 @@
+// @name ZIP archive
+// @entry ZipLocalFileHeader
+// @endian le
+// @desc First local file header of a ZIP archive (PK\x03\x04) — method enum,
+//       general-purpose flag bitfield, and field-length name/extra. ZIP is
+//       always little-endian.
+
+enum ZipMethod : u16 {
+    Stored    = 0
+    Shrunk    = 1
+    Imploded  = 6
+    Deflated  = 8
+    Deflate64 = 9
+    BZIP2     = 12
+    LZMA      = 14
+    Zstd      = 93
+    XZ        = 95
+    PPMd      = 98
+}
+
+// The general-purpose bit flag (a few meaningful bits; the rest are
+// method-specific or reserved).
+bitfield ZipFlags : u16 {
+    encrypted      0   // file is encrypted
+    // bits 1..2 are compression options (method-specific)
+    dataDescriptor 3   // sizes/CRC are 0 here and follow the data instead
+    enhancedDeflate 4
+    patchedData    5
+    strongEncrypt  6
+    utf8           11  // file name / comment are UTF-8
+}
+
+struct ZipLocalFileHeader {
+    signature        bytes[4]   "local file header magic (50 4B 03 04)"
+    versionNeeded    u16        "minimum version needed to extract"
+    flags            ZipFlags   "general purpose bit flag"
+    method           ZipMethod  "compression method"
+    modTime          u16        "last mod file time (DOS format)"
+    modDate          u16        "last mod file date (DOS format)"
+    crc32            u32        "CRC-32 of the uncompressed data"
+    compressedSize   u32        "compressed size (0 if in data descriptor)"
+    uncompressedSize u32        "uncompressed size (0 if in data descriptor)"
+    nameLength       u16        "file name length"
+    extraLength      u16        "extra field length"
+    fileName         string[nameLength]  "file name"
+    extra            bytes[extraLength]   "extra field"
+}

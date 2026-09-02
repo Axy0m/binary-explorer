@@ -1,0 +1,108 @@
+PE: PE  [@0 +64]
+  magic: char[2] = "MZ"  [@0 +2]  // "MZ"
+  lastPageBytes: u16 = 144  [@2 +2]
+  pages: u16 = 3  [@4 +2]
+  relocations: u16 = 0  [@6 +2]
+  headerParagraphs: u16 = 4  [@8 +2]
+  minAlloc: u16 = 0  [@10 +2]
+  maxAlloc: u16 = 65535  [@12 +2]
+  initialSS: u16 = 0  [@14 +2]
+  initialSP: u16 = 184  [@16 +2]
+  checksum: u16 = 0  [@18 +2]
+  initialIP: u16 = 0  [@20 +2]
+  initialCS: u16 = 0  [@22 +2]
+  relocTableOffset: u16 = 64  [@24 +2]
+  overlayNumber: u16 = 0  [@26 +2]
+  reserved: bytes[8] = 00 00 00 00 00 00 00 00  [@28 +8]
+  oemId: u16 = 0  [@36 +2]
+  oemInfo: u16 = 0  [@38 +2]
+  reserved2: bytes[20] = 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  [@40 +20]
+  lfanew: u32 = 64  [@60 +4]  // e_lfanew â file offset of the PE header
+  peHeader: PeHeader  [@64 +128]  // PE header (at e_lfanew)
+    signature: bytes[4] = 50 45 00 00  [@64 +4]  // PE signature (50 45 00 00)
+    machine: PeMachine = I386 (332)  [@68 +2]
+    numberOfSections: u16 = 1  [@70 +2]
+    timeDateStamp: u32 = 1600000000  [@72 +4]  // creation time (unix)
+    pointerToSymbolTable: u32 = 0  [@76 +4]
+    numberOfSymbols: u32 = 0  [@80 +4]
+    sizeOfOptionalHeader: u16 = 104  [@84 +2]  // size of the optional header that follows
+    characteristics: PeCharacteristics  [@86 +2]
+      relocsStripped: bit 0 = false  [@86 +2]
+      executableImage: bit 1 = true  [@86 +2]
+      lineNumsStripped: bit 2 = false  [@86 +2]
+      localSymsStripped: bit 3 = false  [@86 +2]
+      largeAddressAware: bit 5 = false  [@86 +2]
+      machine32Bit: bit 8 = true  [@86 +2]
+      debugStripped: bit 9 = false  [@86 +2]
+      system: bit 12 = false  [@86 +2]
+      dll: bit 13 = false  [@86 +2]
+      upSystemOnly: bit 14 = false  [@86 +2]
+    optional: PeOptionalHeader  [@88 +104]
+      magic: PeMagic = PE32 (267)  [@88 +2]  // PE32 (0x10b) or PE32+ (0x20b)
+      majorLinkerVersion: u8 = 14  [@90 +1]
+      minorLinkerVersion: u8 = 0  [@91 +1]
+      sizeOfCode: u32 = 512  [@92 +4]
+      sizeOfInitializedData: u32 = 512  [@96 +4]
+      sizeOfUninitializedData: u32 = 0  [@100 +4]
+      addressOfEntryPoint: u32 = 4096  [@104 +4]  // RVA of the entry point
+      baseOfCode: u32 = 4096  [@108 +4]  // RVA of the code section
+      baseOfData: u32 = 8192  [@112 +4]  // RVA of the data (PE32 only)
+      imageBase32: u32 = 4194304  [@116 +4]  // preferred load address (PE32)
+      sectionAlignment: u32 = 4096  [@120 +4]
+      fileAlignment: u32 = 512  [@124 +4]
+      majorOsVersion: u16 = 6  [@128 +2]
+      minorOsVersion: u16 = 0  [@130 +2]
+      majorImageVersion: u16 = 0  [@132 +2]
+      minorImageVersion: u16 = 0  [@134 +2]
+      majorSubsystemVersion: u16 = 6  [@136 +2]
+      minorSubsystemVersion: u16 = 0  [@138 +2]
+      win32VersionValue: u32 = 0  [@140 +4]
+      sizeOfImage: u32 = 16384  [@144 +4]
+      sizeOfHeaders: u32 = 512  [@148 +4]
+      checkSum: u32 = 0  [@152 +4]
+      subsystem: PeSubsystem = WindowsCui (3)  [@156 +2]
+      dllCharacteristics: PeDllCharacteristics  [@158 +2]
+        highEntropyVa: bit 5 = false  [@158 +2]
+        dynamicBase: bit 6 = true  [@158 +2]
+        forceIntegrity: bit 7 = false  [@158 +2]
+        nxCompat: bit 8 = true  [@158 +2]
+        noIsolation: bit 9 = false  [@158 +2]
+        noSeh: bit 10 = false  [@158 +2]
+        noBind: bit 11 = false  [@158 +2]
+        appContainer: bit 12 = false  [@158 +2]
+        wdmDriver: bit 13 = false  [@158 +2]
+        guardCf: bit 14 = false  [@158 +2]
+        terminalServerAware: bit 15 = true  [@158 +2]
+      stackReserve32: u32 = 1048576  [@160 +4]
+      stackCommit32: u32 = 4096  [@164 +4]
+      heapReserve32: u32 = 1048576  [@168 +4]
+      heapCommit32: u32 = 4096  [@172 +4]
+      loaderFlags: u32 = 0  [@176 +4]
+      numberOfRvaAndSizes: u32 = 1  [@180 +4]  // number of data directory entries (usually 16)
+      dataDirectories: DataDirectory[numberOfRvaAndSizes]  [@184 +8]  // data directory table
+        0: DataDirectory  [@184 +8]
+          virtualAddress: u32 = 0  [@184 +4]  // RVA of the table
+          size: u32 = 0  [@188 +4]  // size in bytes
+    sectionTableOffset: computed = 128  [@192 +0]
+    sections: SectionHeader[numberOfSections]  [@192 +40]  // section table
+      0: SectionHeader  [@192 +40]
+        name: char[8] = ".text"  [@192 +8]  // section name (NUL-padded)
+        virtualSize: u32 = 420  [@200 +4]  // size in memory
+        virtualAddress: u32 = 4096  [@204 +4]  // RVA of the section
+        sizeOfRawData: u32 = 512  [@208 +4]  // size on disk
+        pointerToRawData: u32 = 512  [@212 +4]  // file offset of the section data
+        pointerToRelocations: u32 = 0  [@216 +4]  // file offset of relocations
+        pointerToLinenumbers: u32 = 0  [@220 +4]  // file offset of line numbers (deprecated)
+        numberOfRelocations: u16 = 0  [@224 +2]  // number of relocations
+        numberOfLinenumbers: u16 = 0  [@226 +2]  // number of line numbers
+        characteristics: PeSectionFlags  [@228 +4]  // section flags
+          code: bit 5 = true  [@228 +4]
+          initializedData: bit 6 = false  [@228 +4]
+          uninitData: bit 7 = false  [@228 +4]
+          discardable: bit 25 = false  [@228 +4]
+          notCached: bit 26 = false  [@228 +4]
+          notPaged: bit 27 = false  [@228 +4]
+          shared: bit 28 = false  [@228 +4]
+          execute: bit 29 = true  [@228 +4]
+          read: bit 30 = true  [@228 +4]
+          write: bit 31 = false  [@228 +4]

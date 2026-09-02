@@ -1,0 +1,16 @@
+{
+  "name": "binary-explorer",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Visual binary structure explorer — bytes <-> schema <-> structure.",
+  "workspaces": [
+    "apps/desktop"
+  ],
+  "scripts": {
+    "dev": "npm run dev --workspace apps/desktop",
+    "build": "npm run build --workspace apps/desktop",
+    "tauri": "npm run tauri --workspace apps/desktop",
+    "gen:icons": "node scripts/generate-icons.mjs",
+    "test:rust": "cargo test"
+  }
+}

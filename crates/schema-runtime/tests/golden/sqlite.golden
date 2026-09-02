@@ -1,0 +1,24 @@
+SqliteHeader: SqliteHeader  [@0 +100]
+  magic: string[16] = "SQLite format 3"  [@0 +16]  // "SQLite format 3\0"
+  pageSize: u16 = 4096  [@16 +2]  // page size in bytes (value 1 = 65536)
+  writeVersion: SqliteFormatVersion = Legacy (1)  [@18 +1]  // file format write version
+  readVersion: SqliteFormatVersion = Legacy (1)  [@19 +1]  // file format read version
+  reservedSpace: u8 = 0  [@20 +1]  // bytes reserved at end of each page
+  maxPayloadFraction: u8 = 64  [@21 +1]  // maximum embedded payload fraction (64)
+  minPayloadFraction: u8 = 32  [@22 +1]  // minimum embedded payload fraction (32)
+  leafPayloadFraction: u8 = 32  [@23 +1]  // leaf payload fraction (32)
+  changeCounter: u32 = 5  [@24 +4]  // file change counter
+  databaseSizePages: u32 = 2  [@28 +4]  // database size, in pages
+  firstFreelistPage: u32 = 0  [@32 +4]  // page number of the first freelist trunk page
+  freelistPageCount: u32 = 0  [@36 +4]  // total number of freelist pages
+  schemaCookie: u32 = 1  [@40 +4]  // schema cookie
+  schemaFormat: u32 = 4  [@44 +4]  // schema format number (1-4)
+  defaultCacheSize: u32 = 0  [@48 +4]  // default page cache size
+  largestRootPage: u32 = 0  [@52 +4]  // largest root b-tree page (vacuum modes)
+  textEncoding: SqliteTextEncoding = Utf8 (1)  [@56 +4]  // database text encoding
+  userVersion: u32 = 0  [@60 +4]  // user version (PRAGMA user_version)
+  incrementalVacuum: u32 = 0  [@64 +4]  // incremental-vacuum mode (nonzero = on)
+  applicationId: u32 = 0  [@68 +4]  // application ID (PRAGMA application_id)
+  reserved: bytes[20] = 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  [@72 +20]  // reserved for expansion (must be zero)
+  versionValidFor: u32 = 5  [@92 +4]  // version-valid-for number
+  sqliteVersion: u32 = 3045000  [@96 +4]  // SQLITE_VERSION_NUMBER that last wrote

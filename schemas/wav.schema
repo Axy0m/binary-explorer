@@ -1,0 +1,17 @@
+// @name WAV audio
+// @entry WAV
+// @endian le
+// @desc RIFF/WAVE header + fmt chunk (assumes fmt is first)
+struct WAV {
+    riff          char[4]
+    fileSize      u32
+    wave          char[4]
+    fmtId         char[4]
+    fmtSize       u32
+    audioFormat   u16
+    channels      u16
+    sampleRate    u32
+    byteRate      u32
+    blockAlign    u16
+    bitsPerSample u16
+}

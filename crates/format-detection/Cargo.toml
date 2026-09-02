@@ -1,0 +1,10 @@
+[package]
+name = "format-detection"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Magic-number / signature detection for common binary formats (plan section 13)."
+
+[dependencies]
+serde = { workspace = true }

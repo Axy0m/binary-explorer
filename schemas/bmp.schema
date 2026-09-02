@@ -1,0 +1,33 @@
+// @name BMP image
+// @entry BMP
+// @endian le
+// @desc File header + BITMAPINFOHEADER (pixel-data pointer demo)
+struct BmpFileHeader {
+    signature  char[2]
+    fileSize   u32
+    reserved1  u16
+    reserved2  u16
+    dataOffset u32
+    // Pointer follow: the pixel array lives at dataOffset (bfOffBits), not
+    // right after the headers. `at` reads there without moving the cursor.
+    firstPixels at dataOffset bytes[4] "first bytes of the pixel array"
+}
+
+struct BmpInfoHeader {
+    headerSize      u32
+    width           i32
+    height          i32
+    planes          u16
+    bitCount        u16
+    compression     u32
+    imageSize       u32
+    xPixelsPerMeter i32
+    yPixelsPerMeter i32
+    colorsUsed      u32
+    colorsImportant u32
+}
+
+struct BMP {
+    file BmpFileHeader
+    info BmpInfoHeader
+}

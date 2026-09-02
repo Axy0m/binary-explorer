@@ -1,0 +1,45 @@
+// @name PNG image
+// @entry PNG
+// @endian be
+// @desc PNG signature + full chunk stream (IHDR decoded, walked until IEND)
+enum PngColorType : u8 {
+    Grayscale      = 0
+    RGB            = 2
+    Palette        = 3
+    GrayscaleAlpha = 4
+    RGBA           = 6
+}
+
+enum PngInterlace : u8 {
+    None  = 0
+    Adam7 = 1
+}
+
+// The decoded payload of an IHDR chunk (exactly 13 bytes).
+struct PngIhdrData {
+    width       u32          "image width in pixels"
+    height      u32          "image height in pixels"
+    bitDepth    u8           "bits per sample"
+    colorType   PngColorType "color model"
+    compression u8           "compression method (0 = deflate)"
+    filter      u8           "filter method (0)"
+    interlace   PngInterlace "interlace method"
+}
+
+// One chunk: length + 4-char type, then a body chosen by the type tag, then a
+// trailing CRC. IHDR is decoded to fields; every other type stays raw bytes.
+struct PngChunk {
+    length    u32     "chunk data length"
+    chunkType char[4] "chunk type tag"
+    data match chunkType {
+        "IHDR"  => PngIhdrData
+        default => bytes[length]
+    }
+    crc u32 "CRC32 of chunk type + data"
+}
+
+struct PNG {
+    signature bytes[8] "PNG magic 89 50 4E 47 0D 0A 1A 0A"
+    // Walk every chunk until the terminating IEND (inclusive).
+    chunks    repeat PngChunk until chunkType == "IEND"
+}

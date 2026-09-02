@@ -1,0 +1,10 @@
+[package]
+name = "schema"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Schema AST/IR for Binary Explorer's DSL. Pure data types; no parsing, no reading, no UI."
+
+[dependencies]
+serde = { workspace = true }

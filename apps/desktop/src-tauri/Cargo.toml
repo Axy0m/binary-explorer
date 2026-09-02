@@ -1,0 +1,35 @@
+[package]
+name = "binary-explorer-desktop"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Binary Explorer desktop shell (Tauri)."
+
+# The Tauri app is compiled as a library that main.rs (and, later, mobile
+# entry points) call into.
+[lib]
+name = "binary_explorer_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-dialog = "2"
+binary-reader = { workspace = true }
+analysis = { path = "../../../crates/analysis" }
+format-detection = { path = "../../../crates/format-detection" }
+search = { path = "../../../crates/search" }
+schema-parser = { path = "../../../crates/schema-parser" }
+schema-runtime = { path = "../../../crates/schema-runtime" }
+file-editing = { path = "../../../crates/file-editing" }
+schema-library = { path = "../../../crates/schema-library" }
+plugin-host = { path = "../../../crates/plugin-host" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+base64 = "0.22"
+# Blocking HTTPS client for the (opt-in) format registry fetch. rustls TLS so we
+# don't depend on a system OpenSSL; this is the app's only outbound network use.
+ureq = { version = "2", features = ["tls", "json"] }

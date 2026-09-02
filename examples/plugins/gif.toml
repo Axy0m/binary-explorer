@@ -1,0 +1,37 @@
+# Example format plugin — GIF (Graphics Interchange Format).
+# A declarative plugin is a single self-contained TOML file: metadata, one or
+# more formats, each with a magic-number detection rule and an inline schema.
+# Install it from the app's Plugins panel ("Install from file…").
+id = "gif"
+name = "GIF image"
+version = "1.0.0"
+description = "GIF87a / GIF89a header and logical screen descriptor."
+author = "Nybble examples"
+
+[[formats]]
+name = "GIF"
+extension = "gif"
+description = "Graphics Interchange Format header"
+confidence = 90
+entry = "Gif"
+endian = "le"
+# "GIF8" catches both GIF87a and GIF89a.
+detect = [{ offset = 0, hex = "47 49 46 38" }]
+schema = """
+bitfield GifPacked : u8 {
+    globalColorTable 7    // a global color table follows the descriptor
+    colorResolution  4..6 // bits per primary color, minus one
+    sort             3    // global color table is sorted by importance
+    tableSize        0..2 // global color table size = 2^(N+1) entries
+}
+
+struct Gif {
+    signature bytes[3]  "GIF signature (\\"GIF\\")"
+    version   bytes[3]  "version (\\"87a\\" or \\"89a\\")"
+    width     u16       "logical screen width (px)"
+    height    u16       "logical screen height (px)"
+    packed    GifPacked "global color table flags"
+    bgColor   u8        "background color index"
+    aspect    u8        "pixel aspect ratio"
+}
+"""

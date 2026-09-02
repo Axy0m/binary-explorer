@@ -1,0 +1,13 @@
+Gzip: Gzip  [@0 +17]
+  magic: bytes[2] = 1f 8b  [@0 +2]  // gzip magic 1F 8B
+  method: u8 = 8  [@2 +1]  // compression method (8 = deflate)
+  flags: GzipFlags  [@3 +1]  // header flags
+    text: bit 0 = false  [@3 +1]
+    hcrc: bit 1 = false  [@3 +1]
+    extra: bit 2 = false  [@3 +1]
+    name: bit 3 = true  [@3 +1]
+    comment: bit 4 = false  [@3 +1]
+  mtime: u32 = 1564219904  [@4 +4]  // modification time (unix)
+  xfl: u8 = 0  [@8 +1]  // extra flags
+  os: u8 = 3  [@9 +1]  // operating system
+  name: cstring = "hi.txt"  [@10 +7]  // original file name (NUL-terminated)

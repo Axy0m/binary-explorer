@@ -1,0 +1,20 @@
+ZipLocalFileHeader: ZipLocalFileHeader  [@0 +35]
+  signature: bytes[4] = 50 4b 03 04  [@0 +4]  // local file header magic (50 4B 03 04)
+  versionNeeded: u16 = 20  [@4 +2]  // minimum version needed to extract
+  flags: ZipFlags  [@6 +2]  // general purpose bit flag
+    encrypted: bit 0 = false  [@6 +2]
+    dataDescriptor: bit 3 = false  [@6 +2]
+    enhancedDeflate: bit 4 = false  [@6 +2]
+    patchedData: bit 5 = false  [@6 +2]
+    strongEncrypt: bit 6 = false  [@6 +2]
+    utf8: bit 11 = true  [@6 +2]
+  method: ZipMethod = Deflated (8)  [@8 +2]  // compression method
+  modTime: u16 = 24576  [@10 +2]  // last mod file time (DOS format)
+  modDate: u16 = 20480  [@12 +2]  // last mod file date (DOS format)
+  crc32: u32 = 305419896  [@14 +4]  // CRC-32 of the uncompressed data
+  compressedSize: u32 = 100  [@18 +4]  // compressed size (0 if in data descriptor)
+  uncompressedSize: u32 = 200  [@22 +4]  // uncompressed size (0 if in data descriptor)
+  nameLength: u16 = 5  [@26 +2]  // file name length
+  extraLength: u16 = 0  [@28 +2]  // extra field length
+  fileName: string[nameLength] = "a.txt"  [@30 +5]  // file name
+  extra: bytes[extraLength]  [@35 +0]  // extra field
