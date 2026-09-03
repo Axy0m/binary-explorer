@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Binary Explorer",
+  "productName": "Nybble",
   "version": "0.1.0",
-  "identifier": "com.binaryexplorer.app",
+  "identifier": "app.nybble.desktop",
   "build": {
     "frontendDist": "../dist",
     "devUrl": "http://localhost:1420",
@@ -13,7 +13,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "Binary Explorer",
+        "title": "Nybble",
         "width": 1200,
         "height": 800,
         "minWidth": 800,

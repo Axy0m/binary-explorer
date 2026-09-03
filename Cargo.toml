@@ -19,9 +19,10 @@ members = [
 [workspace.package]
 version = "0.1.0"
 edition = "2021"
-# Proprietary, closed-source: the app ships as signed installers; the source is
-# not distributed and grants no license. See the LICENSE file.
-license = "LicenseRef-Proprietary"
+# Dual-licensed: GNU AGPL v3 for everyone (see LICENSE), with a separate
+# commercial license available for closed-source or hosted use
+# (see COMMERCIAL-LICENSE.md).
+license = "AGPL-3.0-only"
 authors = ["Majd Shaheen"]
 
 [workspace.dependencies]

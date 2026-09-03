@@ -1,4 +1,4 @@
-//! Tauri backend for Binary Explorer.
+//! Tauri backend for Nybble.
 //!
 //! This layer is a thin bridge: it owns the currently open file's
 //! [`BinaryReader`] and exposes commands the React UI calls over IPC. All real
@@ -1356,7 +1356,7 @@ pub fn run() {
             license_status
         ])
         .run(tauri::generate_context!())
-        .expect("error while running Binary Explorer");
+        .expect("error while running Nybble");
 }
 
 #[cfg(test)]

@@ -154,4 +154,14 @@ demos/               runnable examples
 
 ## License
 
-See [LICENSE](LICENSE).
+Nybble is dual-licensed:
+
+- **[GNU AGPL v3](LICENSE)** — free for everyone. Use it, study it, modify it,
+  fork it, and use it inside your organization at no cost. If you redistribute
+  it or expose it over a network, share your source under the same terms.
+- **[Commercial license](COMMERCIAL-LICENSE.md)** — for embedding Nybble in a
+  closed-source product or hosted service without the AGPL's reciprocal
+  obligations.
+
+The files you analyze, and the schemas and format packs you write, are your own
+work — the license covers Nybble itself, not its output.
