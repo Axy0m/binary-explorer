@@ -1,0 +1,119 @@
+name: Release
+
+# Tagging a version builds installers for all three desktop platforms in
+# parallel and attaches them to a GitHub Release. Tauri cannot cross-compile,
+# so each OS is built on its own runner.
+#
+#   git tag v0.1.0 && git push origin v0.1.0
+#
+# The release is created as a DRAFT: review the assets, then publish manually.
+# `workflow_dispatch` builds the same artifacts without tagging, for testing.
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Universal binary covers both Apple Silicon and Intel Macs.
+          - platform: macos-latest
+            target: universal-apple-darwin
+            args: "--target universal-apple-darwin"
+          # 22.04 rather than latest: linking against an older glibc keeps the
+          # AppImage/deb usable on distros that are not bleeding edge.
+          - platform: ubuntu-22.04
+            target: linux
+            args: ""
+          - platform: windows-latest
+            target: windows
+            args: ""
+
+    runs-on: ${{ matrix.platform }}
+    name: ${{ matrix.target }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Linux build dependencies
+        if: matrix.platform == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libappindicator3-dev \
+            librsvg2-dev \
+            patchelf \
+            libxdo-dev \
+            libssl-dev \
+            build-essential \
+            file
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          # Both macOS arches are required to link the universal binary.
+          targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+
+      - name: Cache Rust build
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: ". -> target"
+          key: ${{ matrix.target }}
+
+      # Installed from the workspace root so npm links the desktop workspace.
+      - name: Install npm dependencies
+        run: npm ci
+
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          projectPath: apps/desktop
+          tagName: ${{ github.ref_type == 'tag' && github.ref_name || format('v0.0.0-dev-{0}', github.run_number) }}
+          releaseName: Nybble ${{ github.ref_type == 'tag' && github.ref_name || 'dev build' }}
+          releaseBody: |
+            See the assets below to download and install this version.
+
+            Nybble is not code-signed yet. Windows SmartScreen will show
+            "Windows protected your PC" — choose **More info -> Run anyway**.
+            macOS Gatekeeper will refuse a double-click — **right-click the app
+            -> Open**, then confirm.
+
+            Verify your download against `SHA256SUMS.txt`, or build from source.
+          releaseDraft: true
+          prerelease: false
+          args: ${{ matrix.args }}
+
+  # Publishing checksums is the free mitigation for shipping unsigned binaries:
+  # it lets anyone confirm the download matches what CI produced.
+  checksums:
+    needs: build
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Generate and attach SHA256SUMS.txt
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          mkdir assets && cd assets
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern '*' || true
+          rm -f SHA256SUMS.txt
+          if [ -z "$(ls -A)" ]; then echo "No assets found for $TAG"; exit 1; fi
+          sha256sum * > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+          gh release upload "$TAG" SHA256SUMS.txt --repo "$GITHUB_REPOSITORY" --clobber
