@@ -40,7 +40,7 @@ the copyleft requirements of section 13 and section 5 of the AGPL.
 
 ## Contact
 
-Majd Shaheen — <TODO: add a public contact address before launch>
+Majd Shaheen — <info@trynybble.com>
 
 Please include the intended use, the product or service involved, and the
 approximate number of seats or deployments.

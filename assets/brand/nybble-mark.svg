@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="400" height="184" viewBox="0 0 400 184" fill="none">
+ <title>nybble mark</title>
+ <rect x="0" y="0" width="76" height="76" rx="18" fill="#2dd4bf"/>
+  <rect x="108" y="0" width="76" height="76" rx="18" fill="#2dd4bf"/>
+  <rect x="218.85" y="2.85" width="70.3" height="70.3" rx="15.15" fill="none" stroke="#56697f" stroke-width="5.7"/>
+  <rect x="326.85" y="2.85" width="70.3" height="70.3" rx="15.15" fill="none" stroke="#56697f" stroke-width="5.7"/>
+  <rect x="0" y="108" width="76" height="76" rx="18" fill="#5eead4"/>
+  <rect x="108" y="108" width="76" height="76" rx="18" fill="#2dd4bf"/>
+  <rect x="218.85" y="110.85" width="70.3" height="70.3" rx="15.15" fill="none" stroke="#56697f" stroke-width="5.7"/>
+  <rect x="326.85" y="110.85" width="70.3" height="70.3" rx="15.15" fill="none" stroke="#56697f" stroke-width="5.7"/>
+</svg>
