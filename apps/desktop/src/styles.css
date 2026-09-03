@@ -134,6 +134,10 @@ button.ghost:hover { border-color: var(--accent); color: var(--text); filter: no
 }
 .panel-window-body { flex: 1; min-height: 0; overflow: auto; padding: 8px 10px; }
 .panel-window-body.hex { padding: 0; overflow: hidden; }
+/* The schema pop-out is a column that fills its window: the editor takes the
+   slack, so it grows with the window instead of staying 200px tall. */
+.panel-window-body.schema { padding: 0; overflow: hidden; display: flex; flex-direction: column; }
+.panel-window-body.schema .schema-editor-monaco { flex: 1; height: auto; min-height: 0; resize: none; }
 .panel-window.panel-empty { align-items: center; justify-content: center; color: var(--muted); font-size: 13px; }
 .col-right { border-right: none; }
 .col-head {
@@ -196,8 +200,11 @@ button.ghost:hover { border-color: var(--accent); color: var(--text); filter: no
 .guess-detail { font-family: var(--mono); font-size: 12px; }
 
 /* Right column panels */
-.col-right { display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
-.rpanel { display: flex; flex-direction: column; min-height: 0; border-bottom: 1px solid var(--border); }
+.col-right { display: flex; flex-direction: column; min-height: 0; overflow-y: auto; overflow-x: hidden; }
+/* Panels keep their natural height rather than being squeezed — when the stack
+   is taller than the column, .col-right scrolls instead of hiding the bottom
+   one. Each panel still scrolls its own body, so both levels work. */
+.rpanel { display: flex; flex-direction: column; min-height: 0; border-bottom: 1px solid var(--border); flex: none; }
 .rpanel .col-body { max-height: 260px; }
 .schema-panel { padding: 0; }
 .schema-controls { margin-left: auto; display: flex; align-items: center; gap: 5px; flex-wrap: wrap; row-gap: 4px; justify-content: flex-end; }
@@ -236,7 +243,7 @@ button.ghost:hover { border-color: var(--accent); color: var(--text); filter: no
 .lib-chip-x { background: transparent; border: none; border-left: 1px solid var(--border); color: var(--muted-2); padding: 2px 6px; cursor: pointer; font-size: 12px; }
 .lib-chip-x:hover { color: var(--amber); }
 
-.extras-panel { flex: 1; }
+.extras-panel { flex: 1 1 auto; min-height: 240px; }
 .extras-panel .col-body { max-height: none; }
 
 /* Entropy strip */

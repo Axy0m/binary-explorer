@@ -48,6 +48,7 @@ import {
   onRequest,
   onAction,
   PANEL_TITLES,
+  type PanelAction,
   type PanelId,
   type UiSnapshot,
 } from "./panelSync";
@@ -149,11 +150,34 @@ export function App() {
       viewMode,
       schemaText,
       entry,
+      schemaError,
       editVersion,
     };
     snapRef.current = snap;
     broadcastSnapshot(snap);
-  }, [file, selected, highlight, endian, viewMode, schemaText, entry, editVersion]);
+  }, [file, selected, highlight, endian, viewMode, schemaText, entry, schemaError, editVersion]);
+
+  // Apply an action sent up by a pop-out panel. Held in a ref because the
+  // listener below is registered once on mount: schema/entry edits and
+  // re-parse need the *current* state, not the state as of mount.
+  const applyAction = (a: PanelAction) => {
+    switch (a.type) {
+      case "select":
+        selectByte(a.offset);
+        break;
+      case "schema":
+        setSchemaText(a.text);
+        break;
+      case "entry":
+        setEntry(a.value);
+        break;
+      case "parse":
+        void handleParse();
+        break;
+    }
+  };
+  const actionRef = useRef(applyAction);
+  actionRef.current = applyAction;
 
   useEffect(() => {
     let alive = true;
@@ -161,7 +185,7 @@ export function App() {
     const track = (p: Promise<() => void>) =>
       p.then((u) => (alive ? uns.push(u) : u()));
     track(onRequest(() => snapRef.current && broadcastSnapshot(snapRef.current)));
-    track(onAction((a) => a.type === "select" && selectByte(a.offset)));
+    track(onAction((a) => actionRef.current(a)));
     return () => {
       alive = false;
       uns.forEach((u) => u());
@@ -181,11 +205,11 @@ export function App() {
     } catch {
       /* not open yet — create it */
     }
+    const size = panel === "schema" ? { width: 680, height: 760 } : { width: 480, height: 640 };
     const w = new WebviewWindow(label, {
       url: `index.html?panel=${panel}`,
       title: `Nybble — ${PANEL_TITLES[panel]}`,
-      width: 480,
-      height: 640,
+      ...size,
     });
     w.once("tauri://error", (e) =>
       setError(`Could not open panel window: ${JSON.stringify(e.payload)}`),
@@ -791,6 +815,7 @@ export function App() {
                   <button className="ghost" onClick={handleExportSchema} title="Export to a shareable file">Export</button>
                   <button className="ghost" onClick={() => setShowPack(true)} title="Export as a registry plugin pack (plugin.toml)">Pack…</button>
                   <button className="ghost" onClick={handleImportSchema} title="Import a schema file">Import</button>
+                  <button className="popout-btn" title="Pop out to its own window" onClick={() => popOut("schema")}>⤢</button>
                 </div>
               </div>
               {savingLib && (
