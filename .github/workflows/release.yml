@@ -102,13 +102,14 @@ jobs:
   # it lets anyone confirm the download matches what CI produced.
   checksums:
     needs: build
-    if: github.ref_type == 'tag'
     runs-on: ubuntu-latest
     steps:
       - name: Generate and attach SHA256SUMS.txt
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: ${{ github.ref_name }}
+          # Same expression the build job uses, so a workflow_dispatch run
+          # targets its own dev draft instead of the branch name.
+          TAG: ${{ github.ref_type == 'tag' && github.ref_name || format('v0.0.0-dev-{0}', github.run_number) }}
         run: |
           mkdir assets && cd assets
           gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern '*' || true
