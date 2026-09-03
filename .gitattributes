@@ -1,3 +1,8 @@
 # Golden snapshot files are compared byte-for-byte (after CRLF normalization)
 # by the schema-runtime tests. Pin them to LF so they don't churn on checkout.
 *.golden text eol=lf
+
+# CI workflows run on Linux runners; CRLF in a `run:` block would break the
+# shell ("$'\r': command not found"). Pin them to LF regardless of platform.
+*.yml text eol=lf
+*.yaml text eol=lf
