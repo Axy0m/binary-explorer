@@ -31,6 +31,8 @@ export interface UiSnapshot {
   fileLen: number;
   selected: number | null;
   highlight: { start: number; end: number } | null;
+  /** The byte range picked in a hex view, awaiting "make this a field". */
+  selection: { start: number; end: number } | null;
   endian: Endianness;
   viewMode: "hex" | "text";
   schemaText: string;
@@ -43,6 +45,9 @@ export interface UiSnapshot {
 /** An action a pop-out panel sends back to the main window. */
 export type PanelAction =
   | { type: "select"; offset: number }
+  /** A hex pop-out dragged a byte range (null clears it); `done` is false
+   *  while the drag is still in progress. */
+  | { type: "selrange"; range: { start: number; end: number } | null; done: boolean }
   /** The schema pop-out edited the DSL text. */
   | { type: "schema"; text: string }
   /** The schema pop-out edited the entry-struct name. */

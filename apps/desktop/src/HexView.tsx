@@ -20,6 +20,13 @@ interface Props {
   /** Bumped after any edit/undo/redo so cached byte pages are re-fetched. */
   editVersion?: number;
   onSelect: (offset: number) => void;
+  /** The dragged byte range `[start, end)`, drawn as the active selection. */
+  selection?: { start: number; end: number } | null;
+  /** Reports a dragged (or shift-extended) range; null when a click clears it.
+   *  `done` is false while the pointer is still down, true once the gesture
+   *  ends — so a caller can track the range live but only act on it at the
+   *  end. Omit to disable range selection entirely. */
+  onSelectRange?: (range: { start: number; end: number } | null, done: boolean) => void;
 }
 
 /**
@@ -27,7 +34,10 @@ interface Props {
  * are fetched from the Rust backend one 4 KB page at a time and cached — so
  * scrolling through a multi-GB file never loads it into memory.
  */
-export function HexView({ fileLen, selected, highlight, mode, colorAt, isEdited, editVersion = 0, onSelect }: Props) {
+export function HexView({
+  fileLen, selected, highlight, mode, colorAt, isEdited, editVersion = 0,
+  onSelect, selection = null, onSelectRange,
+}: Props) {
   const scrollerRef = useRef<HTMLDivElement>(null);
   const [scrollTop, setScrollTop] = useState(0);
   const [viewportHeight, setViewportHeight] = useState(400);
@@ -100,6 +110,98 @@ export function HexView({ fileLen, selected, highlight, mode, colorAt, isEdited,
     }
   }, [selected]);
 
+  // --- Range selection ------------------------------------------------------
+  // Drag across bytes to pick a range, or shift-click to extend one. A plain
+  // click (press and release on the same byte) clears the range and falls
+  // through to `onSelect`, so single-byte selection behaves as it always did.
+  const anchorRef = useRef<number | null>(null);
+  const movedRef = useRef(false);
+  const rangeRef = useRef<{ start: number; end: number } | null>(null);
+  const [edge, setEdge] = useState<-1 | 1 | null>(null);
+
+  const emit = useCallback(
+    (a: number, b: number, done: boolean) => {
+      const start = Math.min(a, b);
+      const end = Math.min(Math.max(a, b) + 1, fileLen);
+      rangeRef.current = { start, end };
+      onSelectRange?.({ start, end }, done);
+    },
+    [onSelectRange, fileLen],
+  );
+
+  // Dragging past the top or bottom edge keeps scrolling and extending.
+  useEffect(() => {
+    if (edge == null) return;
+    const el = scrollerRef.current;
+    if (!el) return;
+    const id = window.setInterval(() => {
+      el.scrollTop += edge * ROW_HEIGHT;
+      setScrollTop(el.scrollTop);
+      const anchor = anchorRef.current;
+      if (anchor == null) return;
+      const row =
+        edge < 0
+          ? Math.floor(el.scrollTop / ROW_HEIGHT)
+          : Math.floor((el.scrollTop + el.clientHeight) / ROW_HEIGHT) - 1;
+      const off = row * BYTES_PER_ROW + (edge < 0 ? 0 : BYTES_PER_ROW - 1);
+      emit(anchor, Math.max(0, Math.min(off, fileLen - 1)), false);
+    }, 60);
+    return () => window.clearInterval(id);
+  }, [edge, fileLen, emit]);
+
+  /** The byte under the pointer, or null if it isn't over one. */
+  function offsetAtPointer(e: React.PointerEvent): number | null {
+    const el = document.elementFromPoint(e.clientX, e.clientY);
+    const cell = el?.closest<HTMLElement>("[data-off]");
+    if (!cell) return null;
+    const off = Number(cell.dataset.off);
+    return Number.isFinite(off) ? off : null;
+  }
+
+  function onPointerDown(e: React.PointerEvent<HTMLDivElement>) {
+    if (!onSelectRange || e.button !== 0) return;
+    const off = offsetAtPointer(e);
+    if (off == null) return;
+    if (e.shiftKey) {
+      // Extend from wherever the current range or byte selection starts.
+      const from = selection?.start ?? selected ?? off;
+      anchorRef.current = from;
+      movedRef.current = true;
+      emit(from, off, true);
+      e.preventDefault();
+      return;
+    }
+    anchorRef.current = off;
+    movedRef.current = false;
+    e.currentTarget.setPointerCapture(e.pointerId);
+  }
+
+  function onPointerMove(e: React.PointerEvent<HTMLDivElement>) {
+    const anchor = anchorRef.current;
+    if (anchor == null) return;
+    if (e.buttons === 0) {
+      endDrag();
+      return;
+    }
+    const box = scrollerRef.current?.getBoundingClientRect();
+    if (box) {
+      setEdge(e.clientY < box.top ? -1 : e.clientY > box.bottom ? 1 : null);
+    }
+    const off = offsetAtPointer(e);
+    if (off == null) return;
+    if (off !== anchor) movedRef.current = true;
+    emit(anchor, off, false);
+  }
+
+  function endDrag() {
+    if (anchorRef.current == null) return;
+    anchorRef.current = null;
+    setEdge(null);
+    // A press and release on one byte isn't a range - let the click select it.
+    if (!movedRef.current) onSelectRange?.(null, true);
+    else if (rangeRef.current) onSelectRange?.(rangeRef.current, true);
+  }
+
   const byteAt = useCallback((offset: number): number | undefined => {
     const page = Math.floor(offset / PAGE_BYTES);
     const arr = pagesRef.current.get(page);
@@ -122,6 +224,7 @@ export function HexView({ fileLen, selected, highlight, mode, colorAt, isEdited,
         byteAt={byteAt}
         selected={selected}
         highlight={highlight}
+        selection={selection}
         mode={mode}
         colorAt={colorAt}
         isEdited={isEdited}
@@ -131,7 +234,15 @@ export function HexView({ fileLen, selected, highlight, mode, colorAt, isEdited,
   }
 
   return (
-    <div className="hex-scroller" ref={scrollerRef} onScroll={onScroll}>
+    <div
+      className={"hex-scroller" + (onSelectRange ? " selectable" : "")}
+      ref={scrollerRef}
+      onScroll={onScroll}
+      onPointerDown={onPointerDown}
+      onPointerMove={onPointerMove}
+      onPointerUp={endDrag}
+      onPointerCancel={endDrag}
+    >
       <div className="hex-canvas" style={{ height: totalRows * ROW_HEIGHT }}>
         {rows}
       </div>
@@ -145,13 +256,14 @@ interface RowProps {
   byteAt: (offset: number) => number | undefined;
   selected: number | null;
   highlight: { start: number; end: number } | null;
+  selection: { start: number; end: number } | null;
   mode: "hex" | "text";
   colorAt?: (offset: number) => string | undefined;
   isEdited?: (offset: number) => boolean;
   onSelect: (offset: number) => void;
 }
 
-function HexRow({ row, fileLen, byteAt, selected, highlight, mode, colorAt, isEdited, onSelect }: RowProps) {
+function HexRow({ row, fileLen, byteAt, selected, highlight, selection, mode, colorAt, isEdited, onSelect }: RowProps) {
   const base = row * BYTES_PER_ROW;
   const hexCells = [];
   const asciiCells = [];
@@ -162,10 +274,13 @@ function HexRow({ row, fileLen, byteAt, selected, highlight, mode, colorAt, isEd
     const b = inFile ? byteAt(offset) : undefined;
     const isSel = selected === offset;
     const inRange = highlight != null && offset >= highlight.start && offset < highlight.end;
+    const picked = selection != null && offset >= selection.start && offset < selection.end;
     const edited = inFile && isEdited != null && isEdited(offset);
-    const cls = (isSel ? " sel" : "") + (inRange ? " inrange" : "") + (edited ? " edited" : "");
+    const cls =
+      (isSel ? " sel" : "") + (inRange ? " inrange" : "") +
+      (picked ? " picked" : "") + (edited ? " edited" : "");
     // Field tint only shows when the byte isn't the active selection/highlight.
-    const col = !isSel && !inRange && inFile ? colorAt?.(offset) : undefined;
+    const col = !isSel && !inRange && !picked && inFile ? colorAt?.(offset) : undefined;
     const tint = col ? { background: `color-mix(in srgb, ${col} 24%, transparent)` } : undefined;
 
     hexCells.push(
@@ -173,6 +288,7 @@ function HexRow({ row, fileLen, byteAt, selected, highlight, mode, colorAt, isEd
         key={i}
         className={"hex-byte" + cls + (i === 8 ? " gap" : "")}
         style={tint}
+        data-off={inFile ? offset : undefined}
         onClick={inFile ? () => onSelect(offset) : undefined}
       >
         {!inFile ? "  " : b === undefined ? ".." : b.toString(16).padStart(2, "0").toUpperCase()}
@@ -184,6 +300,7 @@ function HexRow({ row, fileLen, byteAt, selected, highlight, mode, colorAt, isEd
         key={i}
         className={"ascii-char" + cls}
         style={tint}
+        data-off={inFile ? offset : undefined}
         onClick={inFile ? () => onSelect(offset) : undefined}
       >
         {!inFile || b === undefined ? " " : b >= 0x20 && b <= 0x7e ? String.fromCharCode(b) : "."}

@@ -39,6 +39,8 @@ import {
   type Guess,
 } from "./api";
 import { HexView } from "./HexView";
+import { FieldBuilder, PREVIEW_CAP } from "./FieldBuilder";
+import { insertFields, targetStructName } from "./schemaEdit";
 import { FileMap } from "./FileMap";
 import { SchemaEditor } from "./SchemaEditor";
 import { Plugins } from "./Plugins";
@@ -101,6 +103,14 @@ export function App() {
   const [selectedNode, setSelectedNode] = useState<FieldNode | null>(null);
   const [rawBytes, setRawBytes] = useState<Uint8Array | null>(null);
 
+  // A byte range dragged in the hex view, and its bytes — the raw material for
+  // the field builder ("make this a field").
+  const [selection, setSelection] = useState<Range | null>(null);
+  const [selBytes, setSelBytes] = useState<Uint8Array | null>(null);
+  // True while the pointer is still down. The range highlights live, but the
+  // field builder only opens once the drag ends.
+  const [dragging, setDragging] = useState(false);
+
   // Schema library (Phase 12).
   const [library, setLibrary] = useState<SchemaEntry[]>([]);
   const [showPlugins, setShowPlugins] = useState(false);
@@ -146,6 +156,7 @@ export function App() {
       fileLen: file?.len ?? 0,
       selected,
       highlight,
+      selection,
       endian,
       viewMode,
       schemaText,
@@ -155,7 +166,7 @@ export function App() {
     };
     snapRef.current = snap;
     broadcastSnapshot(snap);
-  }, [file, selected, highlight, endian, viewMode, schemaText, entry, schemaError, editVersion]);
+  }, [file, selected, highlight, selection, endian, viewMode, schemaText, entry, schemaError, editVersion]);
 
   // Apply an action sent up by a pop-out panel. Held in a ref because the
   // listener below is registered once on mount: schema/entry edits and
@@ -164,6 +175,9 @@ export function App() {
     switch (a.type) {
       case "select":
         selectByte(a.offset);
+        break;
+      case "selrange":
+        pickRange(a.range, a.done);
         break;
       case "schema":
         setSchemaText(a.text);
@@ -230,6 +244,8 @@ export function App() {
       setHighlight(null);
       setSelectedNode(null);
       setRawBytes(null);
+      setSelection(null);
+      setDragging(false);
       setGuesses([]);
       setMatches([]);
       setMatchIndex(0);
@@ -285,6 +301,29 @@ export function App() {
     readRange(selectedNode.offset, n).then(setRawBytes).catch(() => setRawBytes(null));
   }, [selectedNode]);
 
+  /** Track a hex-view range: live while dragging, settled when `done`. */
+  function pickRange(range: Range | null, done: boolean) {
+    setSelection(range);
+    setDragging(!done);
+  }
+
+  // Selected range -> its bytes, for the field builder's candidate readings.
+  // Long selections only fetch a head: no reading needs more than that.
+  useEffect(() => {
+    if (selection == null || dragging) {
+      setSelBytes(null);
+      return;
+    }
+    const n = Math.min(selection.end - selection.start, PREVIEW_CAP);
+    let alive = true;
+    readRange(selection.start, n)
+      .then((b) => alive && setSelBytes(b))
+      .catch(() => alive && setSelBytes(null));
+    return () => {
+      alive = false;
+    };
+  }, [selection, dragging, editVersion]);
+
   // Persist schema settings.
   useEffect(() => {
     localStorage.setItem("schemaText", schemaText);
@@ -300,6 +339,37 @@ export function App() {
     setSelectedNode(found?.node ?? null);
     setHighlight(found ? { start: found.node.offset, end: found.node.offset + found.node.size } : null);
   }, [tree]);
+
+  // --- Selection -> schema field --------------------------------------------
+
+  /** Bytes the current parse already covers; a new field is appended after it. */
+  const parsedEnd = tree ? tree.offset + tree.size : 0;
+  const gap = selection ? Math.max(0, selection.start - parsedEnd) : 0;
+  const overlaps = selection != null && selection.start < parsedEnd;
+
+  /**
+   * Append the selected range to the schema as a field, then re-parse so the
+   * new node shows up in the tree immediately. `pad` bytes of unclaimed space
+   * before it become a filler field, so the new one lands at its real offset.
+   */
+  async function addSelectionField(name: string, type: string, pad: number) {
+    if (!selection) return;
+    const fields = pad > 0
+      ? [{ name: `pad_${parsedEnd.toString(16)}`, type: `bytes[${pad}]` }, { name, type }]
+      : [{ name, type }];
+    const next = insertFields(schemaText, entry, fields);
+    const start = selection.start;
+    setSchemaText(next);
+    setSelection(null);
+    setSelected(start);
+    try {
+      setTree(await parseSchema(next, entry, endian));
+      setSchemaError(null);
+    } catch (e) {
+      setTree(null);
+      setSchemaError(String(e));
+    }
+  }
 
   function handleGoto(e: React.FormEvent) {
     e.preventDefault();
@@ -593,7 +663,9 @@ export function App() {
   // Editor keyboard shortcuts: Ctrl+S save, Ctrl+Z undo, Ctrl+Y / Ctrl+Shift+Z redo.
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
-      if (!file || !(e.ctrlKey || e.metaKey)) return;
+      if (!file) return;
+      if (e.key === "Escape" && selection) { setSelection(null); return; }
+      if (!(e.ctrlKey || e.metaKey)) return;
       const k = e.key.toLowerCase();
       if (k === "s") { e.preventDefault(); handleSave(); }
       else if (k === "z" && !e.shiftKey) { e.preventDefault(); handleUndo(); }
@@ -710,7 +782,10 @@ export function App() {
               {tree ? (
                 <StructureTree root={tree} activePath={activePath} colorFor={colorFor} onSelect={selectField} />
               ) : (
-                <p className="hint">Parse a schema to see the structure.</p>
+                <p className="hint">
+                  Parse a schema to see the structure — or drag across bytes in the hex
+                  view to turn them into fields.
+                </p>
               )}
             </div>
           </section>
@@ -733,8 +808,15 @@ export function App() {
           <section className="col col-hex">
             <div className="col-head">
               Hex view
-              {selected != null && (
-                <span className="sel-label">selection 0x{selected.toString(16).toUpperCase()}</span>
+              {selection != null ? (
+                <span className="sel-label">
+                  selection 0x{selection.start.toString(16).toUpperCase()}
+                  –0x{selection.end.toString(16).toUpperCase()} ({selection.end - selection.start} B)
+                </span>
+              ) : (
+                selected != null && (
+                  <span className="sel-label">selection 0x{selected.toString(16).toUpperCase()}</span>
+                )
               )}
               <div className="view-toggle">
                 <button className={"seg" + (viewMode === "hex" ? " on" : "")} onClick={() => setViewMode("hex")}>Hex</button>
@@ -742,6 +824,19 @@ export function App() {
               </div>
               <button className="popout-btn" title="Pop out to its own window" onClick={() => popOut("hex")}>⤢</button>
             </div>
+            {selection && !dragging && (
+              <FieldBuilder
+                key={`${selection.start}:${selection.end}`}
+                range={selection}
+                bytes={selBytes}
+                endian={endian}
+                target={targetStructName(schemaText, entry)}
+                gap={gap}
+                overlaps={overlaps}
+                onAdd={addSelectionField}
+                onCancel={() => setSelection(null)}
+              />
+            )}
             <HexView
               key={file.path}
               fileLen={file.len}
@@ -752,6 +847,8 @@ export function App() {
               isEdited={isEdited}
               editVersion={editVersion}
               onSelect={selectByte}
+              selection={selection}
+              onSelectRange={pickRange}
             />
           </section>
 
@@ -876,6 +973,9 @@ export function App() {
             <span className={"status-dot" + (valid ? " ok" : "")} />
             <span>{valid ? "parsed" : "no schema"}</span>
             {selected != null && <span>· off 0x{selected.toString(16).toUpperCase()}</span>}
+            {selection != null && (
+              <span>· sel {selection.end - selection.start} B</span>
+            )}
             <span>· {file.len.toLocaleString()} B</span>
             <span>· {endian === "le" ? "little-endian" : "big-endian"}</span>
             <div className="spacer" />
