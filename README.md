@@ -58,6 +58,7 @@ GzModule
   multi-gigabyte files via memory mapping
 - Offset gutter, ASCII pane, jump-to-offset, search
 - Bidirectional highlight: click a field → its bytes light up, and vice versa
+- Drag a byte range → pick a reading → it becomes a schema field (below)
 
 **Schema language**
 - `struct`, all fixed-width primitives (`u8`…`u64`, `i8`…`i64`, `f32`/`f64`,
@@ -78,10 +79,36 @@ GzModule
 - Automatic format detection on open
 
 **Formats & sharing**
-- Built-in schemas for common formats (PNG, ELF, PE, ZIP, gzip, BMP, WAV,
-  SQLite, …)
+- Built-in schemas for common formats (PNG, gzip, ELF, PE, Mach-O, ZIP,
+  SQLite, PCAP)
 - A plugin system for packaging and installing format definitions
 - Browse and install community format packs from within the app
+
+---
+
+## Building a schema by hand
+
+You don't have to know the language to start. Drag across a run of bytes in the
+hex view and Nybble offers the readings those bytes actually support — with the
+decoded value next to each, so you can see which one is right:
+
+```
+0xC–0x10 · 4 bytes                                   → struct PNG
+
+  [ char[4]  "IHDR" ]  [ u32  1380206665 ]  [ bytes[4]  49 48 44 52 ]
+
+  name: ihdr                                          [ Add field ]
+```
+
+Pick one, name it, and the field is appended to your schema and parsed
+immediately — the node appears in the tree, its bytes light up, and you drag the
+next run. A printable selection names itself (`IHDR` becomes `ihdr`), and any
+unclaimed bytes before the selection become a `bytes[n]` pad so the new field
+lands at its real offset.
+
+The schema text accumulates in the editor as you go, so the format you're
+reverse-engineering ends up as a file you can save, share, or publish to the
+registry — and the language teaches itself on the way.
 
 ---
 
