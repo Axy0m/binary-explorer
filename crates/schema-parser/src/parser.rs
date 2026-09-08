@@ -278,7 +278,10 @@ impl Parser {
     }
 
     fn parse_field(&mut self) -> Result<Field, ParseError> {
-        let (name, _) = self.expect_ident("a field name")?;
+        let (name, name_span) = self.expect_ident("a field name")?;
+        // The declaring line travels with the field so a runtime fault can
+        // point back at the exact source line that failed.
+        let line = Some(name_span.line);
 
         // `name = <expr>` is a computed field: no type, reads no bytes.
         if matches!(self.peek(), Some(t) if t.kind == TokenKind::Eq) {
@@ -291,6 +294,7 @@ impl Parser {
                 condition: None,
                 decode: None,
                 desc: self.parse_optional_desc(),
+                line,
             });
         }
 
@@ -330,6 +334,7 @@ impl Parser {
             condition,
             decode,
             desc: self.parse_optional_desc(),
+            line,
         })
     }
 

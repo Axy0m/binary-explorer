@@ -7,7 +7,7 @@
 // them and re-broadcasts. Heavy data (the parsed tree, byte pages) is never serialized
 // over events — panels re-derive it from the snapshot.
 import { emit, listen, type UnlistenFn } from "@tauri-apps/api/event";
-import type { Endianness } from "./api";
+import type { Endianness, Fault } from "./api";
 
 export type PanelId = "tree" | "vinspect" | "hex" | "preview" | "schema";
 
@@ -39,6 +39,8 @@ export interface UiSnapshot {
   entry: string;
   /** Latest parse error, so the schema pop-out can show the same squiggle. */
   schemaError: string | null;
+  /** Where the last parse stopped, so the schema pop-out shows the same bar. */
+  fault: Fault | null;
   editVersion: number;
 }
 

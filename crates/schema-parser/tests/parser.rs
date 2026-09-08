@@ -621,3 +621,16 @@ fn varint_array_parses() {
         other => panic!("expected array of varint, got {other:?}"),
     }
 }
+
+#[test]
+fn field_records_its_source_line() {
+    // Blank lines and comments between fields, so this also guards the lexer's
+    // newline tracking - the line is what points a runtime fault at the right
+    // row in the editor.
+    let src = "struct S {\n  a u8\n\n  // a comment\n  b u16\n\n  c = a + 1\n}";
+    let schema = parse(src).expect("schema should parse");
+    let fields = &schema.structs[0].fields;
+    assert_eq!(fields[0].line, Some(2), "first field");
+    assert_eq!(fields[1].line, Some(5), "field after a blank line and a comment");
+    assert_eq!(fields[2].line, Some(7), "computed field");
+}

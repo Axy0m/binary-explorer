@@ -142,6 +142,11 @@ pub struct Field {
     pub decode: Option<Decode>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub desc: Option<String>,
+    /// 1-based line in the schema source where this field was declared. Set by
+    /// the parser; used to point a runtime fault at the offending line. Absent
+    /// for schemas built programmatically or loaded from older JSON.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub line: Option<u32>,
 }
 
 /// A post-read transform on a field's raw bytes: `decode <transform> [as <Type>]`.

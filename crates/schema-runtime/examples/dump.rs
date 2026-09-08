@@ -8,7 +8,7 @@
 //! structure view is wired up.
 
 use binary_reader::BinaryReader;
-use schema_runtime::{parse, Endian, FieldNode, Value};
+use schema_runtime::{parse_partial, Endian, FieldNode, Value};
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -47,8 +47,22 @@ fn main() {
         entry
     };
 
-    match parse(&schema, &reader, &entry_name, endian) {
-        Ok(tree) => print_node(&tree, 0),
+    match parse_partial(&schema, &reader, &entry_name, endian) {
+        Ok(out) => {
+            print_node(&out.tree, 0);
+            // A schema that does not fit still prints what it decoded; the
+            // fault says where it stopped. Exit non-zero so scripts can tell.
+            if let Some(f) = out.fault {
+                let space = if f.decoded { " (in decoded bytes)" } else { "" };
+                eprintln!();
+                eprintln!("fault at 0x{:X}{space} in {}", f.offset, f.path);
+                if let Some(line) = f.schema_line {
+                    eprintln!("  schema line {line}");
+                }
+                eprintln!("  {}", f.message);
+                std::process::exit(1);
+            }
+        }
         Err(e) => {
             eprintln!("parse failed: {e}");
             std::process::exit(1);

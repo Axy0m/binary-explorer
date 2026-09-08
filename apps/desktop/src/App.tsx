@@ -32,6 +32,7 @@ import {
   type Detection,
   type Endianness,
   type EditStatus,
+  type Fault,
   type FieldNode,
   type FileInfo,
   type Interpretations,
@@ -98,6 +99,8 @@ export function App() {
   );
   const [tree, setTree] = useState<FieldNode | null>(null);
   const [schemaError, setSchemaError] = useState<string | null>(null);
+  /** Where a partial parse stopped. The tree is still shown alongside it. */
+  const [fault, setFault] = useState<Fault | null>(null);
   const [activePath, setActivePath] = useState<string | null>(null);
   const [highlight, setHighlight] = useState<Range | null>(null);
   const [selectedNode, setSelectedNode] = useState<FieldNode | null>(null);
@@ -162,11 +165,12 @@ export function App() {
       schemaText,
       entry,
       schemaError,
+      fault,
       editVersion,
     };
     snapRef.current = snap;
     broadcastSnapshot(snap);
-  }, [file, selected, highlight, selection, endian, viewMode, schemaText, entry, schemaError, editVersion]);
+  }, [file, selected, highlight, selection, endian, viewMode, schemaText, entry, schemaError, fault, editVersion]);
 
   // Apply an action sent up by a pop-out panel. Held in a ref because the
   // listener below is registered once on mount: schema/entry edits and
@@ -240,6 +244,7 @@ export function App() {
       setSelected(null);
       setInterp(null);
       setTree(null);
+      setFault(null);
       setActivePath(null);
       setHighlight(null);
       setSelectedNode(null);
@@ -362,13 +367,7 @@ export function App() {
     setSchemaText(next);
     setSelection(null);
     setSelected(start);
-    try {
-      setTree(await parseSchema(next, entry, endian));
-      setSchemaError(null);
-    } catch (e) {
-      setTree(null);
-      setSchemaError(String(e));
-    }
+    await runParse(next, entry, endian);
   }
 
   function handleGoto(e: React.FormEvent) {
@@ -422,14 +421,23 @@ export function App() {
     setHighlight({ start: offset, end: offset + len });
   }
 
-  async function handleParse() {
-    if (!file) return;
-    setSchemaError(null);
+  /**
+   * Run a schema and take whatever it produced.
+   *
+   * A parse that hits a bad field still returns the fields that decoded, so the
+   * tree is kept and the fault is shown beside it - being wrong while authoring
+   * should cost you the rest of the parse, not the whole view. `catch` is now
+   * only for a schema that does not compile at all.
+   */
+  async function runParse(text: string, ent: string, end: Endianness) {
     try {
-      const root = await parseSchema(schemaText, entry, endian);
-      setTree(root);
+      const out = await parseSchema(text, ent, end);
+      setTree(out.tree);
+      setFault(out.fault ?? null);
+      setSchemaError(null);
     } catch (e) {
       setTree(null);
+      setFault(null);
       setActivePath(null);
       setHighlight(null);
       setSelectedNode(null);
@@ -437,19 +445,17 @@ export function App() {
     }
   }
 
+  async function handleParse() {
+    if (!file) return;
+    await runParse(schemaText, entry, endian);
+  }
+
   async function handleUseBuiltin() {
     if (!builtin) return;
     setSchemaText(builtin.text);
     setEntry(builtin.entry);
     setEndian(builtin.endian);
-    try {
-      const root = await parseSchema(builtin.text, builtin.entry, builtin.endian);
-      setTree(root);
-      setSchemaError(null);
-    } catch (e) {
-      setTree(null);
-      setSchemaError(String(e));
-    }
+    await runParse(builtin.text, builtin.entry, builtin.endian);
   }
 
   // --- Schema library & sharing (Phase 12) ----------------------------------
@@ -464,13 +470,7 @@ export function App() {
     setSchemaText(s.text);
     setEntry(s.entry);
     setEndian(s.endian);
-    try {
-      setTree(await parseSchema(s.text, s.entry, s.endian));
-      setSchemaError(null);
-    } catch (e) {
-      setTree(null);
-      setSchemaError(String(e));
-    }
+    await runParse(s.text, s.entry, s.endian);
   }
 
   async function handlePickFromLibrary(id: string) {
@@ -569,6 +569,16 @@ export function App() {
     }
   }
 
+  /**
+   * Jump the hex view to where a parse stopped. A fault inside a `decode`d
+   * buffer has no file position - those bytes are not on disk - so it selects
+   * the encoded field instead of pointing at an unrelated byte.
+   */
+  function jumpToFault(f: Fault) {
+    if (f.decoded) return;
+    setSelected(f.offset);
+  }
+
   // Field -> bytes.
   function selectField(node: FieldNode, path: string) {
     setActivePath(path);
@@ -586,7 +596,9 @@ export function App() {
     setEditVersion((v) => v + 1);
     if (tree) {
       try {
-        setTree(await parseSchema(schemaText, entry, endian));
+        const out = await parseSchema(schemaText, entry, endian);
+        setTree(out.tree);
+        setFault(out.fault ?? null);
       } catch {
         /* keep the previous tree if a re-parse fails */
       }
@@ -675,7 +687,9 @@ export function App() {
     return () => window.removeEventListener("keydown", onKey);
   });
 
-  const valid = tree != null && !schemaError;
+  const valid = tree != null && !schemaError && fault == null;
+  /** Short status word: a broken schema and an absent one are not the same thing. */
+  const status = tree == null ? (schemaError ? "error" : "no schema") : fault ? "1 fault" : "parsed";
   const dirty = edit?.dirty ?? false;
 
   return (
@@ -731,7 +745,11 @@ export function App() {
         )}
         {file && <span className="pill">{endian.toUpperCase()}</span>}
         {file && <span className="pill">16 / row</span>}
-        {file && <span className={"valid" + (valid ? " ok" : "")}>● {valid ? "valid" : "no schema"}</span>}
+        {file && (
+          <span className={"valid" + (valid ? " ok" : "") + (fault ? " fault" : "")}>
+            ● {tree == null ? (schemaError ? "error" : "no schema") : fault ? "1 fault" : "valid"}
+          </span>
+        )}
 
         {file && (
           <div className="edit-tools">
@@ -780,7 +798,13 @@ export function App() {
             </div>
             <div className="col-body">
               {tree ? (
-                <StructureTree root={tree} activePath={activePath} colorFor={colorFor} onSelect={selectField} />
+                <StructureTree
+                  root={tree}
+                  activePath={activePath}
+                  colorFor={colorFor}
+                  fault={fault}
+                  onSelect={selectField}
+                />
               ) : (
                 <p className="hint">
                   Parse a schema to see the structure — or drag across bytes in the hex
@@ -935,8 +959,31 @@ export function App() {
                 </div>
               )}
               <input className="entry-input" value={entry} onChange={(e) => setEntry(e.target.value)} placeholder="entry struct (default: first)" spellCheck={false} />
-              <SchemaEditor value={schemaText} onChange={setSchemaText} error={schemaError ?? undefined} />
+              <SchemaEditor
+                value={schemaText}
+                onChange={setSchemaText}
+                error={schemaError ?? fault?.message}
+                errorLine={fault?.schema_line}
+              />
               {schemaError && <div className="schema-error">{schemaError}</div>}
+              {fault && (
+                <div
+                  className={"fault-bar" + (fault.decoded ? "" : " jumpable")}
+                  onClick={() => jumpToFault(fault)}
+                  title={
+                    fault.decoded
+                      ? "This offset is inside decoded bytes, which have no position in the file"
+                      : "Jump to this byte"
+                  }
+                >
+                  <span className="fault-where">
+                    {fault.decoded ? "+" : ""}0x{fault.offset.toString(16).toUpperCase()}
+                  </span>
+                  <span className="fault-path">{fault.path}</span>
+                  {fault.schema_line != null && <span className="fault-line">line {fault.schema_line}</span>}
+                  <span className="fault-msg">{fault.message}</span>
+                </div>
+              )}
               {packNotice && (
                 <div className="schema-notice" onClick={() => setPackNotice(null)} title="Dismiss">{packNotice}</div>
               )}
@@ -970,8 +1017,8 @@ export function App() {
       <footer className="statusbar">
         {file ? (
           <>
-            <span className={"status-dot" + (valid ? " ok" : "")} />
-            <span>{valid ? "parsed" : "no schema"}</span>
+            <span className={"status-dot" + (valid ? " ok" : "") + (fault ? " fault" : "")} />
+            <span>{status}</span>
             {selected != null && <span>· off 0x{selected.toString(16).toUpperCase()}</span>}
             {selection != null && (
               <span>· sel {selection.end - selection.start} B</span>

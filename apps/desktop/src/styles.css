@@ -222,6 +222,24 @@ button.ghost:hover { border-color: var(--accent); color: var(--text); filter: no
 }
 .schema-editor-monaco .monaco-editor,
 .schema-editor-monaco .monaco-editor .overflow-guard { border-radius: 6px; }
+.fault-bar {
+  display: flex; align-items: baseline; gap: 8px; margin: 0 10px 8px; padding: 5px 8px;
+  background: color-mix(in srgb, var(--error) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--error) 55%, transparent); border-radius: 4px;
+  font-family: var(--mono); font-size: 11.5px; color: var(--error);
+  white-space: nowrap; overflow: hidden;
+}
+.fault-bar.jumpable { cursor: pointer; }
+.fault-bar.jumpable:hover { background: color-mix(in srgb, var(--error) 20%, transparent); }
+.fault-where { font-weight: 600; }
+.fault-path { color: var(--text); opacity: 0.85; }
+.fault-line { opacity: 0.7; }
+.fault-msg { overflow: hidden; text-overflow: ellipsis; opacity: 0.85; }
+.tree-row.fault { color: var(--error); cursor: default; }
+.tree-row.fault:hover { background: none; }
+.tree-row.fault .tree-value { color: var(--error); opacity: 0.85; overflow: hidden; text-overflow: ellipsis; }
+.valid.fault, .status-dot.fault { color: var(--error); }
+.status-dot.fault { background: var(--error); }
 .schema-error { margin: 0 10px 8px; color: var(--error); font-family: var(--mono); font-size: 11.5px; white-space: pre-wrap; }
 .reparse { margin: 0 10px 10px; }
 

@@ -78,6 +78,32 @@ export interface FieldNode {
   children: FieldNode[];
 }
 
+/** What kind of wall a parse hit. Mirrors `schema_runtime::FaultKind`. */
+export type FaultKind = "out_of_bounds" | "schema" | "data" | "limit";
+
+/** Where and why schema execution stopped. Mirrors `schema_runtime::Fault`. */
+export interface Fault {
+  /** The runtime error, rendered. */
+  message: string;
+  kind: FaultKind;
+  /** Offset parsing stopped at - in the file, unless `decoded` is set. */
+  offset: number;
+  /** Root-to-node field path, e.g. `Png.chunks[3].length`. */
+  path: string;
+  /** 1-based line in the schema source that declared the failing field. */
+  schema_line?: number;
+  /** True when `offset` indexes a decoded buffer rather than the file, so it
+   *  must not be used to jump the hex view. */
+  decoded: boolean;
+}
+
+/** A parse result: whatever decoded, plus the fault that stopped it (if any).
+ *  Mirrors `schema_runtime::ParseOutcome`. */
+export interface ParseOutcome {
+  tree: FieldNode;
+  fault?: Fault;
+}
+
 /** A detected file format. Mirrors the backend `DetectionOut`. */
 export interface Detection {
   format: string;
@@ -167,8 +193,8 @@ export function parseSchema(
   schemaText: string,
   entry: string,
   endian: Endianness,
-): Promise<FieldNode> {
-  return invoke<FieldNode>("parse_schema", { schemaText, entry, endian });
+): Promise<ParseOutcome> {
+  return invoke<ParseOutcome>("parse_schema", { schemaText, entry, endian });
 }
 
 // --- Editing (Phase 10) ----------------------------------------------------

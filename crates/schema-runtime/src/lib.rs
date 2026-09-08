@@ -22,8 +22,8 @@ use std::io::Read;
 
 use binary_reader::BinaryReader;
 use schema::{
-    BinOp, BitfieldDef, CompareOp, CompareValue, Condition, Decode, EnumDef, Expr, Len, MatchKey,
-    Prim, Schema, StructDef, Transform, TypeExpr,
+    BinOp, BitfieldDef, CompareOp, CompareValue, Condition, Decode, EnumDef, Expr, Field, Len,
+    MatchKey, Prim, Schema, StructDef, Transform, TypeExpr,
 };
 use serde::{Deserialize, Serialize};
 
@@ -195,33 +195,275 @@ pub enum RuntimeError {
     TooDeep(usize),
 }
 
+/// Where and why schema execution stopped.
+///
+/// Parsing halts at the first fault — after a bad field every later offset is
+/// guesswork — but everything read up to that point is kept, so the caller gets
+/// a partial tree plus this description of the wall it hit.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Fault {
+    /// The underlying [`RuntimeError`], rendered.
+    pub message: String,
+    /// Offset where parsing stopped. In the file, unless `decoded` is set.
+    pub offset: usize,
+    /// Root-to-node path of the field that failed, e.g. `Png.chunks[3].length`.
+    pub path: String,
+    /// Coarse category, so the UI can tell "your file is truncated" from
+    /// "your schema is wrong".
+    pub kind: FaultKind,
+    /// 1-based line in the schema source that declared the failing field.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub schema_line: Option<u32>,
+    /// True when `offset` points into a `decode`d buffer rather than the file.
+    /// Those bytes do not exist on disk, so the offset must not be treated as
+    /// a file position.
+    #[serde(default)]
+    pub decoded: bool,
+}
+
+/// The result of a fault-tolerant parse: whatever was decoded, plus the fault
+/// that stopped it (if any).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ParseOutcome {
+    pub tree: FieldNode,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fault: Option<Fault>,
+}
+
+/// What kind of wall the parse hit.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FaultKind {
+    /// Ran past the end of the file or buffer — typically a truncated file or a
+    /// field that is wider than the schema says.
+    OutOfBounds,
+    /// The schema is wrong: an unknown type, or a reference to a field that
+    /// does not exist.
+    Schema,
+    /// The bytes do not fit the schema: no matching arm, a malformed varint, a
+    /// transform that failed.
+    Data,
+    /// A built-in guard fired (nesting depth or `repeat` iteration cap).
+    Limit,
+}
+
+impl FaultKind {
+    fn of(err: &RuntimeError) -> Self {
+        use RuntimeError::*;
+        match err {
+            Read(binary_reader::ReadError::OutOfBounds { .. }) => FaultKind::OutOfBounds,
+            UnknownStruct(_)
+            | UnknownType(_)
+            | UnknownLengthField(_)
+            | UnknownConditionField(_)
+            | UnknownMatchField(_)
+            | ExprUnknownField(_)
+            | DecodeNotBytes(_) => FaultKind::Schema,
+            TooDeep(_) | RepeatOverrun(_) => FaultKind::Limit,
+            _ => FaultKind::Data,
+        }
+    }
+}
+
+/// One level of the root-to-current-field path, with the schema line that
+/// declared it (absent for array/repeat indices, which have no line of their own).
+struct Frame {
+    seg: String,
+    line: Option<u32>,
+}
+
+/// Pull the byte offset out of the errors that carry one, so a fault points at
+/// the byte that actually failed rather than the start of the field.
+fn err_offset(err: &RuntimeError) -> Option<usize> {
+    match err {
+        RuntimeError::Read(binary_reader::ReadError::OutOfBounds { offset, .. })
+        | RuntimeError::Read(binary_reader::ReadError::InvalidText { offset, .. }) => Some(*offset),
+        RuntimeError::VarintTooLong(offset) => Some(*offset),
+        _ => None,
+    }
+}
+
+/// Render the path stack as `a.b[2].c` — index segments attach without a dot.
+fn join_path(frames: &[Frame]) -> String {
+    let mut out = String::new();
+    for f in frames {
+        if !out.is_empty() && !f.seg.starts_with('[') {
+            out.push('.');
+        }
+        out.push_str(&f.seg);
+    }
+    out
+}
+
 type Result<T> = std::result::Result<T, RuntimeError>;
 
 /// Parse `entry`, a struct named in `schema`, starting at offset 0.
+///
+/// All-or-nothing: any fault becomes an `Err`. Use [`parse_partial`] to get the
+/// tree that was decoded before the fault, which is what an interactive editor
+/// wants — a schema under construction is wrong most of the time.
 pub fn parse(
     schema: &Schema,
     reader: &BinaryReader,
     entry: &str,
     endian: Endian,
 ) -> Result<FieldNode> {
-    Runtime {
+    let (tree, fault) = run(schema, reader, entry, endian)?;
+    // Return the original error, not a wrapper: callers that predate fault
+    // tolerance keep matching on the exact variant they always did.
+    match fault {
+        Some((err, _)) => Err(err),
+        None => Ok(tree),
+    }
+}
+
+/// Parse `entry` against the bytes, keeping whatever decodes successfully.
+///
+/// Execution stops at the first fault, but every field read before it is
+/// retained, so the caller gets a partial tree plus a [`Fault`] saying where it
+/// stopped. `Err` is reserved for failures that leave no tree at all (an entry
+/// struct the schema does not define).
+pub fn parse_partial(
+    schema: &Schema,
+    reader: &BinaryReader,
+    entry: &str,
+    endian: Endian,
+) -> Result<ParseOutcome> {
+    let (tree, fault) = run(schema, reader, entry, endian)?;
+    Ok(ParseOutcome {
+        tree,
+        fault: fault.map(|(_, f)| f),
+    })
+}
+
+/// Shared body of [`parse`] and [`parse_partial`]: the tree that was built, and
+/// the fault that stopped it (paired with the error it came from).
+fn run(
+    schema: &Schema,
+    reader: &BinaryReader,
+    entry: &str,
+    endian: Endian,
+) -> Result<(FieldNode, Option<(RuntimeError, Fault)>)> {
+    let mut rt = Runtime {
         schema,
         reader,
         endian,
-    }
-    .parse_struct_field(entry.to_string(), entry, 0, 0)
+        fault: None,
+        path: vec![Frame {
+            seg: entry.to_string(),
+            line: None,
+        }],
+        decoded: false,
+    };
+    let tree = rt.parse_struct_field(entry.to_string(), entry, 0, 0)?;
+    Ok((tree, rt.fault))
 }
 
 struct Runtime<'a> {
     schema: &'a Schema,
     reader: &'a BinaryReader,
     endian: Endian,
+    /// The first fault seen, with the error it came from. Once set, every
+    /// enclosing loop unwinds without reading further, so the innermost (most
+    /// specific) location wins.
+    fault: Option<(RuntimeError, Fault)>,
+    /// Root-to-current-field path, pushed on entry to each container.
+    path: Vec<Frame>,
+    /// True inside a `decode ... as T` sub-parse, where offsets index the
+    /// decoded buffer rather than the file.
+    decoded: bool,
 }
 
 impl Runtime<'_> {
+    /// True once a fault has been recorded - every enclosing container checks
+    /// this and stops, since offsets after a fault are guesswork.
+    fn faulted(&self) -> bool {
+        self.fault.is_some()
+    }
+
+    /// Push a path frame for a named field.
+    fn push_field(&mut self, field: &Field) {
+        self.path.push(Frame {
+            seg: field.name.clone(),
+            line: field.line,
+        });
+    }
+
+    /// Push a path frame for an array or `repeat` element index.
+    fn push_index(&mut self, i: usize) {
+        self.path.push(Frame {
+            seg: format!("[{i}]"),
+            line: None,
+        });
+    }
+
+    /// Record `err` as *the* fault, unless one is already recorded - the first
+    /// is the innermost, and so the most specific.
+    ///
+    /// `at` is the fallback offset (the cursor of the failing field); errors
+    /// carrying their own offset use that instead. Call with the failing field
+    /// already pushed onto `self.path`.
+    fn record(&mut self, err: RuntimeError, at: usize) {
+        if self.faulted() {
+            return;
+        }
+        let fault = Fault {
+            offset: err_offset(&err).unwrap_or(at),
+            message: err.to_string(),
+            kind: FaultKind::of(&err),
+            path: join_path(&self.path),
+            // The innermost frame that knows its line: an index frame has none,
+            // so a fault on `xs[2]` attributes to the line declaring `xs`.
+            schema_line: self.path.iter().rev().find_map(|f| f.line),
+            decoded: self.decoded,
+        };
+        self.fault = Some((err, fault));
+    }
+
+    /// Read one struct field, returning its node and the cursor position after
+    /// it. A pointer field reads elsewhere and leaves the cursor where it was.
+    fn parse_one_field(
+        &mut self,
+        field: &Field,
+        struct_offset: usize,
+        cursor: usize,
+        siblings: &[FieldNode],
+        depth: usize,
+    ) -> Result<(FieldNode, usize)> {
+        let (mut node, next) = if let Some(ptr) = &field.pointer {
+            // Pointer follow: read the type at the target offset. This does not
+            // advance the sequential cursor - the field's bytes live elsewhere,
+            // so the enclosing struct's contiguous size is unchanged.
+            let raw = self.resolve_len(&ptr.offset, siblings, struct_offset)?;
+            let target = if ptr.relative {
+                struct_offset + raw
+            } else {
+                raw
+            };
+            let n = self.parse_type(&field.name, &field.ty, target, siblings, depth + 1)?;
+            (n, cursor)
+        } else {
+            let n = self.parse_type(&field.name, &field.ty, cursor, siblings, depth + 1)?;
+            let next = cursor + n.size;
+            (n, next)
+        };
+        // Apply a `decode` transform to the field's raw bytes, if any. This
+        // keeps the node's file offset/size (the encoded span) but replaces its
+        // value/children with the decoded result.
+        if let Some(dec) = &field.decode {
+            node = self.decode_field(node, dec, depth)?;
+        }
+        node.description = field.desc.clone().unwrap_or_default();
+        Ok((node, next))
+    }
+
     /// Build a node for a field of struct type `struct_name` at `offset`.
+    ///
+    /// On a fault the fields read so far are kept and the loop stops; the node
+    /// reports the span it actually covered (`cursor - offset`), so the hex
+    /// highlight never claims bytes that were never decoded.
     fn parse_struct_field(
-        &self,
+        &mut self,
         field_name: String,
         struct_name: &str,
         offset: usize,
@@ -230,8 +472,10 @@ impl Runtime<'_> {
         if depth >= MAX_DEPTH {
             return Err(RuntimeError::TooDeep(MAX_DEPTH));
         }
-        let def: &StructDef = self
-            .schema
+        // Copied out of `self` first: `&Schema` is shared and `Copy`, so `def`
+        // borrows the schema, not `self`, and survives the `&mut self` calls below.
+        let schema = self.schema;
+        let def: &StructDef = schema
             .struct_named(struct_name)
             .ok_or_else(|| RuntimeError::UnknownStruct(struct_name.to_string()))?;
 
@@ -241,31 +485,40 @@ impl Runtime<'_> {
             // A conditional field whose guard is false is absent: it reads no
             // bytes and produces no node, so following fields stay put.
             if let Some(cond) = &field.condition {
-                if !self.eval_condition(cond, &children)? {
-                    continue;
+                let guard = self.eval_condition(cond, &children);
+                match guard {
+                    Ok(true) => {}
+                    Ok(false) => continue,
+                    Err(e) => {
+                        self.push_field(field);
+                        self.record(e, cursor);
+                        self.path.pop();
+                        break;
+                    }
                 }
             }
-            let mut node = if let Some(ptr) = &field.pointer {
-                // Pointer follow: read the type at the target offset. This does
-                // not advance the sequential cursor — the field's bytes live
-                // elsewhere, so the enclosing struct's contiguous size is
-                // unchanged.
-                let raw = self.resolve_len(&ptr.offset, &children, offset)?;
-                let target = if ptr.relative { offset + raw } else { raw };
-                self.parse_type(&field.name, &field.ty, target, &children, depth + 1)?
-            } else {
-                let n = self.parse_type(&field.name, &field.ty, cursor, &children, depth + 1)?;
-                cursor += n.size;
-                n
-            };
-            // Apply a `decode` transform to the field's raw bytes, if any. This
-            // keeps the node's file offset/size (the encoded span) but replaces
-            // its value/children with the decoded result.
-            if let Some(dec) = &field.decode {
-                node = self.decode_field(node, dec, depth)?;
+            self.push_field(field);
+            // Bound to a `let` rather than matched directly: a `match` scrutinee
+            // keeps its temporaries - including the `&children` borrow - alive
+            // for the whole `match`, which would block pushing into `children`.
+            let step = self.parse_one_field(field, offset, cursor, &children, depth);
+            match step {
+                Ok((node, next)) => {
+                    self.path.pop();
+                    cursor = next;
+                    children.push(node);
+                    // A nested container may have recovered and handed back a
+                    // partial node. Keep it, but stop here too.
+                    if self.faulted() {
+                        break;
+                    }
+                }
+                Err(e) => {
+                    self.record(e, cursor);
+                    self.path.pop();
+                    break;
+                }
             }
-            node.description = field.desc.clone().unwrap_or_default();
-            children.push(node);
         }
 
         Ok(FieldNode {
@@ -287,7 +540,12 @@ impl Runtime<'_> {
     /// Decoded children carry offsets into the *decoded* buffer, not the file
     /// (the decoded bytes don't exist on disk), so they can't map back to
     /// source bytes — an inherent property of decompression.
-    fn decode_field(&self, mut node: FieldNode, dec: &Decode, depth: usize) -> Result<FieldNode> {
+    fn decode_field(
+        &mut self,
+        mut node: FieldNode,
+        dec: &Decode,
+        depth: usize,
+    ) -> Result<FieldNode> {
         let raw = match &node.value {
             Value::Bytes(b) => b.clone(),
             // `decode` is only meaningful on a raw byte run.
@@ -298,17 +556,38 @@ impl Runtime<'_> {
 
         match &dec.as_type {
             Some(as_type) => {
-                // Re-parse the decoded bytes as their own little document.
+                // Re-parse the decoded bytes as their own little document. The
+                // sub-runtime inherits the path so a fault inside reads as
+                // `outer.blob.inner`, and is flagged `decoded` because its
+                // offsets index the decoded buffer, not the file.
                 let sub = BinaryReader::from_bytes(decoded);
-                let rt = Runtime {
+                let mut rt = Runtime {
                     schema: self.schema,
                     reader: &sub,
                     endian: self.endian,
+                    fault: None,
+                    path: std::mem::take(&mut self.path),
+                    decoded: true,
                 };
-                let parsed = rt.parse_type(&node.name, as_type, 0, &[], depth + 1)?;
+                let parsed = rt.parse_type(&node.name, as_type, 0, &[], depth + 1);
                 node.type_name = format!("decode {tname} as {}", type_display(as_type));
-                node.value = parsed.value;
-                node.children = parsed.children;
+                match parsed {
+                    Ok(p) => {
+                        node.value = p.value;
+                        node.children = p.children;
+                    }
+                    Err(e) => {
+                        // Recorded here, one level inside the decoded buffer, so
+                        // the offset is not mistaken for a file position.
+                        rt.record(e, 0);
+                        node.value = Value::Struct;
+                        node.children = Vec::new();
+                    }
+                }
+                self.path = rt.path;
+                if self.fault.is_none() {
+                    self.fault = rt.fault;
+                }
             }
             None => {
                 node.type_name = format!("decode {tname}");
@@ -323,7 +602,7 @@ impl Runtime<'_> {
     /// the fields already decoded in the enclosing struct, used to resolve
     /// length references.
     fn parse_type(
-        &self,
+        &mut self,
         name: &str,
         ty: &TypeExpr,
         offset: usize,
@@ -388,9 +667,25 @@ impl Runtime<'_> {
                 for i in 0..n {
                     // Array elements can't reference sibling fields, so no
                     // siblings are passed down into the element type.
-                    let node = self.parse_type(&i.to_string(), elem, cursor, &[], depth + 1)?;
-                    cursor += node.size;
-                    children.push(node);
+                    self.push_index(i);
+                    let step = self.parse_type(&i.to_string(), elem, cursor, &[], depth + 1);
+                    match step {
+                        Ok(node) => {
+                            self.path.pop();
+                            cursor += node.size;
+                            children.push(node);
+                            // The element recovered but faulted inside; keep the
+                            // partial element and stop the array here.
+                            if self.faulted() {
+                                break;
+                            }
+                        }
+                        Err(e) => {
+                            self.record(e, cursor);
+                            self.path.pop();
+                            break;
+                        }
+                    }
                 }
                 Ok(FieldNode {
                     name: name.to_string(),
@@ -449,17 +744,42 @@ impl Runtime<'_> {
                     if children.len() >= MAX_ITERS {
                         return Err(RuntimeError::RepeatOverrun(MAX_ITERS));
                     }
-                    let node =
-                        self.parse_type(&children.len().to_string(), elem, cursor, &[], depth + 1)?;
+                    self.push_index(children.len());
+                    let step =
+                        self.parse_type(&children.len().to_string(), elem, cursor, &[], depth + 1);
+                    let node = match step {
+                        Ok(node) => {
+                            self.path.pop();
+                            node
+                        }
+                        Err(e) => {
+                            self.record(e, cursor);
+                            self.path.pop();
+                            break;
+                        }
+                    };
                     // A zero-width element with no sentinel would loop forever;
                     // bail rather than spin.
                     let empty = node.size == 0;
                     cursor += node.size;
+                    // A faulted element is incomplete, so `until` would test
+                    // half-read children. Keep the element and stop instead.
+                    if self.faulted() {
+                        children.push(node);
+                        break;
+                    }
                     let stop = match until {
                         // The condition sees the just-read element's own fields as
                         // its scope, so `until tag == "ENDF"` tests that element's
                         // `tag` field.
-                        Some(cond) => self.eval_condition(cond, &node.children)?,
+                        Some(cond) => match self.eval_condition(cond, &node.children) {
+                            Ok(v) => v,
+                            Err(e) => {
+                                self.record(e, cursor);
+                                children.push(node);
+                                break;
+                            }
+                        },
                         None => false,
                     };
                     children.push(node);

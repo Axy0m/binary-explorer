@@ -3,12 +3,23 @@
 //! these tests exercise the whole Phase 3 + Phase 4 pipeline end to end.
 
 use binary_reader::BinaryReader;
-use schema_runtime::{parse, Endian, FieldNode, Value};
+use schema_runtime::{parse, parse_partial, Endian, Fault, FaultKind, FieldNode, ParseOutcome, Value};
 
 fn run(src: &str, entry: &str, bytes: Vec<u8>, endian: Endian) -> FieldNode {
     let schema = schema_parser::parse(src).expect("schema should parse");
     let reader = BinaryReader::from_bytes(bytes);
     parse(&schema, &reader, entry, endian).expect("runtime should succeed")
+}
+
+/// Fault-tolerant counterpart to `run`: returns whatever parsed, plus the fault.
+fn run_partial(src: &str, entry: &str, bytes: Vec<u8>, endian: Endian) -> ParseOutcome {
+    let schema = schema_parser::parse(src).expect("schema should parse");
+    let reader = BinaryReader::from_bytes(bytes);
+    parse_partial(&schema, &reader, entry, endian).expect("entry struct should resolve")
+}
+
+fn fault_of(out: &ParseOutcome) -> &Fault {
+    out.fault.as_ref().expect("expected a fault")
 }
 
 /// Find a direct child by name.
@@ -867,4 +878,222 @@ fn overlong_varint_errors_not_panics() {
         err.to_string().contains("varint"),
         "expected a varint error, got: {err}"
     );
+}
+
+// ---------------------------------------------------------------------------
+// Fault-tolerant parsing: a wrong schema is the normal state while authoring,
+// so `parse_partial` keeps everything that decoded and reports where it stopped.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn truncated_file_keeps_the_fields_that_parsed() {
+    // Multi-line on purpose: a one-liner would make the `schema_line` assertion
+    // vacuous.
+    let src = "struct H {\n  magic char[4]\n  version u16\n  size u32\n}";
+    // 6 bytes: magic + version fit, size runs off the end.
+    let out = run_partial(src, "H", vec![0x41, 0x42, 0x43, 0x44, 0x01, 0x00], Endian::Little);
+
+    assert_eq!(out.tree.children.len(), 2, "the two complete fields survive");
+    assert_eq!(child(&out.tree, "magic").value, Value::Str("ABCD".into()));
+    assert_eq!(child(&out.tree, "version").value, Value::U(1));
+    // The root spans only what actually decoded, so the hex view never
+    // highlights bytes that were never read.
+    assert_eq!(out.tree.size, 6);
+
+    let f = fault_of(&out);
+    assert_eq!(f.offset, 6);
+    assert_eq!(f.path, "H.size");
+    assert_eq!(f.kind, FaultKind::OutOfBounds);
+    assert_eq!(f.schema_line, Some(4));
+    assert!(!f.decoded);
+}
+
+#[test]
+fn fault_inside_a_repeat_carries_the_element_index() {
+    let src = "struct F { items repeat Item }\nstruct Item { a u32  b u32 }";
+    // Element 0 complete (8 bytes); element 1 has `a` but only half of `b`.
+    let bytes = vec![
+        1, 0, 0, 0, 2, 0, 0, 0, // items[0]
+        3, 0, 0, 0, 4, 0, // items[1].a, then a truncated b
+    ];
+    let out = run_partial(src, "F", bytes, Endian::Little);
+
+    let items = child(&out.tree, "items");
+    assert_eq!(items.children.len(), 2, "the partial element is kept");
+    assert_eq!(items.children[1].children.len(), 1, "only `a` decoded");
+    assert_eq!(items.size, 12);
+
+    let f = fault_of(&out);
+    assert_eq!(f.path, "F.items[1].b");
+    assert_eq!(f.offset, 12);
+    assert_eq!(f.kind, FaultKind::OutOfBounds);
+}
+
+#[test]
+fn fault_inside_an_array_element_carries_the_index() {
+    let src = "struct S {\n  n u8\n  xs Pt[n]\n}\nstruct Pt { x u16  y u16 }";
+    // n = 3, but only two and a half points follow.
+    let bytes = vec![3, 1, 0, 2, 0, 3, 0, 4, 0, 5, 0];
+    let out = run_partial(src, "S", bytes, Endian::Little);
+
+    let xs = child(&out.tree, "xs");
+    assert_eq!(xs.children.len(), 3, "the partial third element is kept");
+    assert_eq!(xs.children[2].size, 2, "only `x` of the third point decoded");
+    assert_eq!(xs.size, 10);
+
+    let f = fault_of(&out);
+    assert_eq!(f.path, "S.xs[2].y");
+    assert_eq!(f.offset, 11);
+    // An index frame carries no line of its own, so the fault attributes to the
+    // innermost frame that has one.
+    assert_eq!(f.schema_line, Some(5));
+}
+
+#[test]
+fn fault_inside_a_decode_reports_a_decoded_buffer_offset() {
+    // The leading `pad` and the 6-byte blob are chosen so decoded-space and
+    // file-space offsets cannot coincide by accident.
+    let src = "struct S { pad u8  blob bytes[6] decode xor(0) as Inner }\nstruct Inner { a u32  b u32 }";
+    let bytes = vec![0xFF, 1, 0, 0, 0, 2, 0];
+    let out = run_partial(src, "S", bytes, Endian::Little);
+
+    let blob = child(&out.tree, "blob");
+    // The node keeps its *file* span - the encoded bytes are what live on disk.
+    assert_eq!(blob.offset, 1);
+    assert_eq!(blob.size, 6);
+    assert_eq!(blob.children.len(), 1, "`a` decoded before `b` ran out");
+
+    let f = fault_of(&out);
+    assert!(f.decoded, "offset indexes the decoded buffer, not the file");
+    assert_eq!(f.offset, 4, "decoded-space offset, not 5 or 7 or 11");
+    // The sub-runtime inherits the path stack, so the field names compose.
+    assert_eq!(f.path, "S.blob.b");
+}
+
+#[test]
+fn unknown_type_faults_with_the_schema_line_and_cursor_offset() {
+    let src = "struct S {\n  a u32\n  b Nope\n}";
+    let out = run_partial(src, "S", vec![1, 0, 0, 0, 9, 9, 9, 9], Endian::Little);
+
+    assert_eq!(out.tree.children.len(), 1);
+    assert_eq!(out.tree.size, 4);
+
+    let f = fault_of(&out);
+    assert_eq!(f.kind, FaultKind::Schema);
+    assert_eq!(f.path, "S.b");
+    assert_eq!(f.schema_line, Some(3));
+    // UnknownType carries no offset of its own: this exercises the fallback to
+    // the cursor of the failing field.
+    assert_eq!(f.offset, 4);
+}
+
+#[test]
+fn a_fault_on_the_very_first_field_yields_an_empty_but_valid_root() {
+    let out = run_partial("struct S { a u32 }", "S", vec![], Endian::Little);
+    assert_eq!(out.tree.name, "S");
+    assert_eq!(out.tree.size, 0);
+    assert!(out.tree.children.is_empty());
+
+    let f = fault_of(&out);
+    assert_eq!(f.path, "S.a");
+    assert_eq!(f.offset, 0);
+}
+
+#[test]
+fn only_the_first_fault_is_reported() {
+    // Both `b` and `c` are broken; the earlier one must win and nothing after
+    // it may appear in the tree.
+    let src = "struct S {\n  a u16\n  b Nope\n  c AlsoNope\n}";
+    let out = run_partial(src, "S", vec![1, 0], Endian::Little);
+
+    assert_eq!(out.tree.children.len(), 1, "only `a` decoded");
+    let f = fault_of(&out);
+    assert_eq!(f.path, "S.b");
+    assert_eq!(f.schema_line, Some(3));
+}
+
+#[test]
+fn a_fault_deep_in_a_nested_struct_stops_every_enclosing_container() {
+    let src = "struct A { xs B[4] }\nstruct B { c C }\nstruct C { n u32 }";
+    // Two complete elements, then a truncated third.
+    let bytes = vec![1, 0, 0, 0, 2, 0, 0, 0, 3, 0];
+    let out = run_partial(src, "A", bytes, Endian::Little);
+
+    let xs = child(&out.tree, "xs");
+    assert!(
+        xs.children.len() < 4,
+        "the outer array must stop, not run all four elements"
+    );
+    assert_eq!(xs.children.len(), 3);
+    assert_eq!(fault_of(&out).path, "A.xs[2].c.n");
+}
+
+#[test]
+fn a_clean_parse_reports_no_fault_and_the_same_tree_as_parse() {
+    // One case per container kind, so the recovery rewrite is pinned against
+    // perturbing any offset or size on the happy path.
+    let cases: Vec<(&str, &str, Vec<u8>)> = vec![
+        (
+            "struct S { a u16  b u32 }",
+            "S",
+            vec![1, 0, 2, 0, 0, 0],
+        ),
+        (
+            "struct S { n u8  xs u16[n] }",
+            "S",
+            vec![2, 1, 0, 2, 0],
+        ),
+        (
+            "struct F { items repeat Item until tag == 9 }\nstruct Item { tag u8 }",
+            "F",
+            vec![1, 2, 9],
+        ),
+        (
+            "struct S { blob bytes[4] decode xor(0) as Inner }\nstruct Inner { v u32 }",
+            "S",
+            vec![7, 0, 0, 0],
+        ),
+        (
+            "struct S { off u8  target at off u16 }",
+            "S",
+            vec![2, 0, 0xAA, 0xBB],
+        ),
+        (
+            "struct S { k u8  body match k { 1 => One  default => u8 } }\nstruct One { v u16 }",
+            "S",
+            vec![1, 5, 0],
+        ),
+    ];
+
+    for (src, entry, bytes) in cases {
+        let out = run_partial(src, entry, bytes.clone(), Endian::Little);
+        assert!(
+            out.fault.is_none(),
+            "unexpected fault in `{src}`: {:?}",
+            out.fault
+        );
+        let direct = run(src, entry, bytes, Endian::Little);
+        assert_eq!(out.tree, direct, "partial and direct trees differ for `{src}`");
+    }
+}
+
+#[test]
+fn parse_and_parse_partial_agree_on_failure() {
+    // Whatever `parse_partial` reports a fault for, `parse` must still reject -
+    // the two entry points differ only in how much they salvage.
+    let cases: Vec<(&str, &str, Vec<u8>)> = vec![
+        ("struct H { a char[4]  b u32 }", "H", vec![1, 2, 3, 4, 0, 0]),
+        ("struct S { a u32  b Nope }", "S", vec![1, 0, 0, 0]),
+        ("struct S { a u32 }", "S", vec![]),
+    ];
+    for (src, entry, bytes) in cases {
+        let schema = schema_parser::parse(src).expect("schema should parse");
+        let reader = BinaryReader::from_bytes(bytes);
+        let partial = parse_partial(&schema, &reader, entry, Endian::Little).expect("resolves");
+        assert!(partial.fault.is_some(), "expected a fault for `{src}`");
+        assert!(
+            parse(&schema, &reader, entry, Endian::Little).is_err(),
+            "`parse` must still fail for `{src}`"
+        );
+    }
 }

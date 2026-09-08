@@ -1,5 +1,5 @@
 import { useState } from "react";
-import type { FieldNode, Value } from "./api";
+import type { Fault, FieldNode, Value } from "./api";
 
 interface Props {
   root: FieldNode;
@@ -7,7 +7,27 @@ interface Props {
   activePath: string | null;
   /** Color for a node's type dot, keyed by its byte offset (matches the hex view). */
   colorFor?: (offset: number) => string | undefined;
+  /** Where the parse stopped, marked in place at the end of the partial tree. */
+  fault?: Fault | null;
   onSelect: (node: FieldNode, path: string) => void;
+}
+
+/**
+ * Path of the node the parse stopped inside.
+ *
+ * The first fault breaks out of every enclosing container, so the site is
+ * always reachable by descending the last child from the root - no extra
+ * bookkeeping needed to place the marker.
+ */
+export function faultAnchorPath(root: FieldNode): string {
+  let node = root;
+  let path = ROOT_PATH;
+  while (node.children.length > 0) {
+    const i = node.children.length - 1;
+    node = node.children[i];
+    path = childPath(path, i);
+  }
+  return path;
 }
 
 /** Stable identity for a node: its position in the tree, e.g. "r/2/0". */
@@ -57,10 +77,20 @@ export function findFieldAtOffset(
   return best;
 }
 
-export function StructureTree({ root, activePath, colorFor, onSelect }: Props) {
+export function StructureTree({ root, activePath, colorFor, fault, onSelect }: Props) {
+  const faultPath = fault ? faultAnchorPath(root) : null;
   return (
     <div className="tree">
-      <TreeNode node={root} path={ROOT_PATH} depth={0} activePath={activePath} colorFor={colorFor} onSelect={onSelect} />
+      <TreeNode
+        node={root}
+        path={ROOT_PATH}
+        depth={0}
+        activePath={activePath}
+        colorFor={colorFor}
+        fault={fault ?? null}
+        faultPath={faultPath}
+        onSelect={onSelect}
+      />
     </div>
   );
 }
@@ -71,13 +101,21 @@ interface NodeProps {
   depth: number;
   activePath: string | null;
   colorFor?: (offset: number) => string | undefined;
+  fault: Fault | null;
+  faultPath: string | null;
   onSelect: (node: FieldNode, path: string) => void;
 }
 
-function TreeNode({ node, path, depth, activePath, colorFor, onSelect }: NodeProps) {
+function TreeNode({ node, path, depth, activePath, colorFor, fault, faultPath, onSelect }: NodeProps) {
   const [open, setOpen] = useState(depth < 2); // expand the first couple levels
   const hasChildren = node.children.length > 0;
   const isActive = activePath === path;
+  // The fault row belongs to the deepest node the parse got into.
+  const isFaultSite = faultPath === path;
+  // A fault can sit deeper than the levels that open by default, so force every
+  // ancestor of it open - a marker you have to go hunting for is no marker.
+  const onFaultTrail = faultPath != null && faultPath.startsWith(path + "/");
+  const expanded = open || onFaultTrail;
 
   return (
     <div className="tree-node">
@@ -93,7 +131,7 @@ function TreeNode({ node, path, depth, activePath, colorFor, onSelect }: NodePro
             if (hasChildren) setOpen((o) => !o);
           }}
         >
-          {hasChildren ? (open ? "▾" : "▸") : "·"}
+          {hasChildren ? (expanded ? "▾" : "▸") : "·"}
         </span>
         <span className="tree-dot" style={{ background: colorFor?.(node.offset) ?? "var(--muted-2)" }} />
         <span className="tree-name">{node.name}</span>
@@ -105,7 +143,7 @@ function TreeNode({ node, path, depth, activePath, colorFor, onSelect }: NodePro
         )}
         <span className="tree-value">{formatValue(node.value)}</span>
       </div>
-      {hasChildren && open && (
+      {hasChildren && expanded && (
         <div className="tree-children">
           {node.children.map((c, i) => (
             <TreeNode
@@ -115,13 +153,28 @@ function TreeNode({ node, path, depth, activePath, colorFor, onSelect }: NodePro
               depth={depth + 1}
               activePath={activePath}
               colorFor={colorFor}
+              fault={fault}
+              faultPath={faultPath}
               onSelect={onSelect}
             />
           ))}
         </div>
       )}
+      {isFaultSite && fault && (
+        <div className="tree-row fault" style={{ paddingLeft: 8 + (depth + 1) * 14 }} title={fault.message}>
+          <span className="twisty leaf">✗</span>
+          <span className="tree-name">{lastSegment(fault.path)}</span>
+          <span className="tree-value">{fault.message}</span>
+        </div>
+      )}
     </div>
   );
+}
+
+/** The trailing `name` (or `[i]`) of a fault path, for the in-tree marker. */
+function lastSegment(path: string): string {
+  const dot = path.lastIndexOf(".");
+  return dot === -1 ? path : path.slice(dot + 1);
 }
 
 /** Human-readable rendering of a decoded value for the structure tree. */

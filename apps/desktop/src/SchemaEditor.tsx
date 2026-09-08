@@ -126,13 +126,29 @@ function registerLanguage(m: Monaco) {
   });
 }
 
-/** Pull a 1-based (line, col) out of a parse-error message, if present.
- *  Every ParseError except UnexpectedEof carries "line N, col N". */
+/** Build the inline squiggle for the current error.
+ *
+ *  A runtime fault knows its line outright, so it underlines that whole line.
+ *  Parse errors arrive as text only, so their position is still scraped from
+ *  the message — every ParseError except UnexpectedEof carries "line N, col N".
+ */
 function markerFromError(
   m: Monaco,
   model: monaco.editor.ITextModel,
   message: string,
+  errorLine?: number,
 ): monaco.editor.IMarkerData {
+  if (errorLine != null) {
+    const line = Math.min(Math.max(errorLine, 1), model.getLineCount());
+    return {
+      severity: m.MarkerSeverity.Error,
+      message,
+      startLineNumber: line,
+      startColumn: 1,
+      endLineNumber: line,
+      endColumn: model.getLineMaxColumn(line),
+    };
+  }
   const match = /line (\d+), col (\d+)/.exec(message);
   const line = match ? Number(match[1]) : 1;
   // UnexpectedEof has no position — point at the end of the last line.
@@ -152,16 +168,19 @@ interface Props {
   onChange: (text: string) => void;
   /** Latest parse error text, or empty when the schema parsed cleanly. */
   error?: string;
+  /** 1-based line the error belongs to, when it is known exactly (a runtime
+   *  fault). Without it the line is scraped out of `error`. */
+  errorLine?: number;
 }
 
-export function SchemaEditor({ value, onChange, error }: Props) {
+export function SchemaEditor({ value, onChange, error, errorLine }: Props) {
   const editorRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(null);
   const monacoRef = useRef<Monaco | null>(null);
 
   const handleMount: OnMount = (editor, m) => {
     editorRef.current = editor;
     monacoRef.current = m;
-    syncMarkers(m, editor.getModel(), error);
+    syncMarkers(m, editor.getModel(), error, errorLine);
   };
 
   // Reflect the current parse error as an inline squiggle whenever it changes.
@@ -169,8 +188,8 @@ export function SchemaEditor({ value, onChange, error }: Props) {
     const m = monacoRef.current;
     const editor = editorRef.current;
     if (!m || !editor) return;
-    syncMarkers(m, editor.getModel(), error);
-  }, [error]);
+    syncMarkers(m, editor.getModel(), error, errorLine);
+  }, [error, errorLine]);
 
   return (
     <div className="schema-editor-monaco">
@@ -205,8 +224,9 @@ function syncMarkers(
   m: Monaco,
   model: monaco.editor.ITextModel | null,
   error?: string,
+  errorLine?: number,
 ) {
   if (!model) return;
-  const markers = error ? [markerFromError(m, model, error)] : [];
+  const markers = error ? [markerFromError(m, model, error, errorLine)] : [];
   m.editor.setModelMarkers(model, "bxschema", markers);
 }

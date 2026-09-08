@@ -22,7 +22,7 @@
 use std::path::Path;
 
 use binary_reader::BinaryReader;
-use schema_runtime::{parse, Endian, FieldNode, Value};
+use schema_runtime::{parse, parse_partial, Endian, FieldNode, Value};
 
 // --- Built-in schema sources (the exact files the app bundles) -------------
 
@@ -102,6 +102,23 @@ fn golden(name: &str, src: &str, entry: &str, endian: Endian, bytes: Vec<u8>) {
     let reader = BinaryReader::from_bytes(bytes);
     let tree = parse(&schema, &reader, entry, endian)
         .unwrap_or_else(|e| panic!("built-in schema {name} should run against its fixture: {e}"));
+
+    // Fault-tolerant execution must agree with the strict path byte for byte on
+    // a clean parse. This is the guard that the recovery rewrite never perturbs
+    // an offset or size on the happy path - the regression class this file
+    // exists to catch.
+    let partial = parse_partial(&schema, &reader, entry, endian)
+        .unwrap_or_else(|e| panic!("built-in schema {name} should resolve its entry: {e}"));
+    assert!(
+        partial.fault.is_none(),
+        "built-in schema {name} faulted on its own fixture: {:?}",
+        partial.fault
+    );
+    assert_eq!(
+        partial.tree, tree,
+        "parse_partial and parse disagree on the {name} fixture"
+    );
+
     let actual = render(&tree);
 
     let path = Path::new(env!("CARGO_MANIFEST_DIR"))

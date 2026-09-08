@@ -14,7 +14,7 @@ use binary_reader::{BinaryReader, Endian};
 use file_editing::{encode_value, EditBuffer, ValueKind};
 use plugin_host::PluginManifest;
 use schema_library::Metadata;
-use schema_runtime::FieldNode;
+use schema_runtime::ParseOutcome;
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager, State};
 
@@ -376,13 +376,18 @@ fn detect_format(app: AppHandle, state: State<AppState>) -> Result<Vec<Detection
 /// returning the parsed structure tree (plan phases 3-5). `entry` names the
 /// struct to start from; if empty, the first struct in the schema is used.
 /// `endian` is "be" for big-endian, anything else for little-endian.
+///
+/// Execution is fault tolerant: a schema that does not fit the bytes still
+/// returns the fields that decoded, with a `fault` saying where it stopped. An
+/// `Err` here means nothing could be parsed at all - no file, a schema that
+/// does not compile, or a missing entry struct.
 #[tauri::command]
 fn parse_schema(
     schema_text: String,
     entry: String,
     endian: String,
     state: State<AppState>,
-) -> Result<FieldNode, String> {
+) -> Result<ParseOutcome, String> {
     let guard = state.open.lock().unwrap();
     let file = guard.as_ref().ok_or("no file open")?;
 
@@ -419,7 +424,7 @@ fn parse_schema(
         &file.reader
     };
 
-    schema_runtime::parse(&schema, reader, &entry, endian).map_err(|e| e.to_string())
+    schema_runtime::parse_partial(&schema, reader, &entry, endian).map_err(|e| e.to_string())
 }
 
 // ---------------------------------------------------------------------------
