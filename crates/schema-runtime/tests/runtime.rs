@@ -1097,3 +1097,122 @@ fn parse_and_parse_partial_agree_on_failure() {
         );
     }
 }
+
+// --- check / checksums ------------------------------------------------------
+//
+// Every expected value below comes from Python's `zlib` (an independent
+// implementation), not from this crate's own code.
+
+/// `tag char[4]` + `data u32` + a big-endian CRC-32 over both, PNG-style.
+fn crc_fixture(stored_crc: u32) -> Vec<u8> {
+    let mut bytes = b"TAG!".to_vec();
+    bytes.extend_from_slice(&42u32.to_le_bytes());
+    bytes.extend_from_slice(&stored_crc.to_be_bytes());
+    bytes
+}
+
+const CRC_TAG_DATA: u32 = 0x7741_2FA2; // zlib.crc32(b"TAG!" + 2a 00 00 00)
+
+#[test]
+fn check_crc32_over_a_range_validates() {
+    // The CRC field is big-endian like PNG's, so the struct is parsed BE and the
+    // little-endian payload is irrelevant to the checksum itself.
+    let src = "struct S { tag char[4]  data u32  crc u32 check crc32 over(tag .. data) }";
+    let root = run(src, "S", crc_fixture(CRC_TAG_DATA), Endian::Big);
+    let c = child(&root, "crc").check.as_ref().expect("crc has a verdict");
+    assert!(c.ok, "a correct CRC should validate: {c:?}");
+    assert_eq!(c.algo, "crc32");
+    assert_eq!(c.computed, CRC_TAG_DATA as u64);
+    assert_eq!(c.stored, CRC_TAG_DATA as u64);
+    // The covered span is the two fields, not the checksum field itself.
+    assert_eq!((c.over_offset, c.over_size), (0, 8));
+}
+
+#[test]
+fn a_wrong_checksum_is_reported_without_faulting() {
+    // This is the state a half-finished byte edit leaves a file in: it parses
+    // perfectly, it is just no longer self-consistent. Turning that into a parse
+    // fault would throw away the tree you need in order to fix it.
+    let src = "struct S { tag char[4]  data u32  crc u32 check crc32 over(tag .. data) }";
+    let out = run_partial(src, "S", crc_fixture(0xDEAD_BEEF), Endian::Big);
+    assert!(out.fault.is_none(), "a bad checksum must not fault the parse");
+    let c = child(&out.tree, "crc").check.as_ref().unwrap();
+    assert!(!c.ok);
+    assert_eq!(c.stored, 0xDEAD_BEEF);
+    assert_eq!(c.computed, CRC_TAG_DATA as u64, "the fix-up value is reported");
+}
+
+#[test]
+fn check_over_a_single_field_covers_only_that_field() {
+    let src = "struct S { pad u16  data u32  sum u8 check sum8 over(data) }";
+    let mut bytes = vec![0xFF, 0xFF];
+    bytes.extend_from_slice(&42u32.to_le_bytes());
+    bytes.push(42); // sum of 2a 00 00 00
+    let root = run(src, "S", bytes, Endian::Little);
+    let c = child(&root, "sum").check.as_ref().unwrap();
+    assert!(c.ok, "{c:?}");
+    // Starts after the padding, so the 0xFFFF is not counted.
+    assert_eq!((c.over_offset, c.over_size), (2, 4));
+}
+
+#[test]
+fn adler32_and_xor8_are_available() {
+    let src = "struct S { data u32  a u32 check adler32 over(data)  x u8 check xor8 over(data) }";
+    let mut bytes = 42u32.to_le_bytes().to_vec();
+    bytes.extend_from_slice(&0x00AC_002Bu32.to_le_bytes()); // zlib.adler32(2a 00 00 00)
+    bytes.push(0x2A);
+    let root = run(src, "S", bytes, Endian::Little);
+    assert!(child(&root, "a").check.as_ref().unwrap().ok);
+    assert!(child(&root, "x").check.as_ref().unwrap().ok);
+}
+
+#[test]
+fn each_repeated_chunk_is_checked_against_its_own_bytes() {
+    // The PNG shape: a CRC per chunk, inside a `repeat`. Each verdict must cover
+    // that chunk's own span rather than the first one's.
+    let src = "struct Chunk { tag char[4]  data bytes[2]  crc u32 check crc32 over(tag .. data) }
+        struct S { chunks repeat Chunk }";
+    let mut bytes = b"AAAA".to_vec();
+    bytes.extend_from_slice(&[1, 2]);
+    bytes.extend_from_slice(&0xB5B0_8151u32.to_be_bytes()); // zlib.crc32(b"AAAA" + 01 02)
+    bytes.extend_from_slice(b"BBBB");
+    bytes.extend_from_slice(&[3, 4]);
+    bytes.extend_from_slice(&0xBF22_5F2Fu32.to_be_bytes()); // zlib.crc32(b"BBBB" + 03 04)
+    let root = run(src, "S", bytes, Endian::Big);
+    let chunks = child(&root, "chunks");
+    assert_eq!(chunks.children.len(), 2);
+    for (i, chunk) in chunks.children.iter().enumerate() {
+        let c = child(chunk, "crc").check.as_ref().unwrap();
+        assert!(c.ok, "chunk {i} CRC should validate: {c:?}");
+        assert_eq!(c.over_offset, i * 10, "chunk {i} covers its own bytes");
+        assert_eq!(c.over_size, 6);
+    }
+}
+
+#[test]
+fn check_over_an_unseen_field_errors() {
+    let src = "struct S { data u32  crc u32 check crc32 over(nope) }";
+    let out = run_partial(src, "S", vec![0; 8], Endian::Little);
+    let f = fault_of(&out);
+    assert!(f.message.contains("nope"), "got {}", f.message);
+}
+
+#[test]
+fn check_on_a_non_integer_field_errors() {
+    let src = "struct S { data u32  crc bytes[4] check crc32 over(data) }";
+    let out = run_partial(src, "S", vec![0; 8], Endian::Little);
+    let f = fault_of(&out);
+    assert!(f.message.contains("integer"), "got {}", f.message);
+}
+
+#[test]
+fn check_of_an_empty_span_is_the_algorithms_empty_value() {
+    // A zero-length payload is normal (PNG's IEND chunk), and must not error.
+    let src = "struct S { tag char[4]  data bytes[0]  crc u32 check crc32 over(tag .. data) }";
+    let mut bytes = b"IEND".to_vec();
+    bytes.extend_from_slice(&0xAE42_6082u32.to_be_bytes());
+    let root = run(src, "S", bytes, Endian::Big);
+    let c = child(&root, "crc").check.as_ref().unwrap();
+    assert!(c.ok, "the canonical IEND CRC should validate: {c:?}");
+    assert_eq!(c.over_size, 4);
+}

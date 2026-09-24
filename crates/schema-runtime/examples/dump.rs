@@ -79,10 +79,19 @@ fn print_node(node: &FieldNode, depth: usize) {
     } else {
         format!("   // {}", node.description)
     };
+    // A `check` clause's verdict, so a checksum can be validated headlessly.
+    let check = match &node.check {
+        None => String::new(),
+        Some(c) if c.ok => format!("  [{} ok]", c.algo),
+        Some(c) => format!(
+            "  [{} MISMATCH: stored {:#x}, computed {:#x} over @{} +{}]",
+            c.algo, c.stored, c.computed, c.over_offset, c.over_size
+        ),
+    };
     if value.is_empty() {
-        println!("{indent}{}: {}   [{span}]{note}", node.name, node.type_name);
+        println!("{indent}{}: {}   [{span}]{check}{note}", node.name, node.type_name);
     } else {
-        println!("{indent}{}: {} = {value}   [{span}]{note}", node.name, node.type_name);
+        println!("{indent}{}: {} = {value}   [{span}]{check}{note}", node.name, node.type_name);
     }
     for child in &node.children {
         print_node(child, depth + 1);

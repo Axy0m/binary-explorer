@@ -140,6 +140,11 @@ pub struct Field {
     /// zlib_inflate as Header`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub decode: Option<Decode>,
+    /// When present, the field holds a checksum: its stored value is compared
+    /// against one computed over the bytes named by the clause — `crc u32 check
+    /// crc32 over(chunkType .. data)`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub check: Option<Check>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub desc: Option<String>,
     /// 1-based line in the schema source where this field was declared. Set by
@@ -181,6 +186,81 @@ pub enum Transform {
     Inflate,
     /// gzip-member inflate (RFC 1952 — gzip header + DEFLATE + CRC/size).
     Gunzip,
+}
+
+/// A checksum clause on a field: `check <algo> over(<span>)`.
+///
+/// The field itself is an ordinary integer read from the file; the clause says
+/// what those bytes are *supposed* to be, so the runtime can recompute the
+/// checksum and report whether the file is intact. This is what makes byte
+/// editing safe — a changed payload leaves a recorded, recomputable checksum
+/// behind it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Check {
+    pub algo: Checksum,
+    pub span: CheckSpan,
+}
+
+/// A checksum algorithm. Deliberately limited to the small, dependency-free
+/// set that covers the formats people actually hand-reverse; cryptographic
+/// digests would pull in dependencies for a much rarer case.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Checksum {
+    /// CRC-32 as used by PNG, ZIP, and gzip (IEEE 802.3, reflected, init/xor
+    /// `0xFFFFFFFF`).
+    Crc32,
+    /// Adler-32, as carried in a zlib stream trailer.
+    Adler32,
+    /// Sum of the covered bytes, truncated to 8 / 16 / 32 bits. Ubiquitous in
+    /// firmware, boot sectors, and hand-rolled save formats.
+    Sum8,
+    Sum16,
+    Sum32,
+    /// All covered bytes XOR-ed together.
+    Xor8,
+}
+
+impl Checksum {
+    /// The spelling used in schema source.
+    pub fn name(self) -> &'static str {
+        match self {
+            Checksum::Crc32 => "crc32",
+            Checksum::Adler32 => "adler32",
+            Checksum::Sum8 => "sum8",
+            Checksum::Sum16 => "sum16",
+            Checksum::Sum32 => "sum32",
+            Checksum::Xor8 => "xor8",
+        }
+    }
+
+    /// Parse the spelling used in schema source.
+    pub fn from_name(word: &str) -> Option<Checksum> {
+        Some(match word {
+            "crc32" => Checksum::Crc32,
+            "adler32" => Checksum::Adler32,
+            "sum8" => Checksum::Sum8,
+            "sum16" => Checksum::Sum16,
+            "sum32" => Checksum::Sum32,
+            "xor8" => Checksum::Xor8,
+            _ => return None,
+        })
+    }
+}
+
+/// The bytes a checksum covers, named by fields declared earlier in the same
+/// struct.
+///
+/// Naming fields rather than writing offsets is what keeps this usable inside a
+/// `repeat`: a chunk's CRC covers *this* chunk's type and data wherever the
+/// chunk happens to sit, and the runtime already knows where each sibling
+/// landed.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum CheckSpan {
+    /// One field's bytes: `over(data)`.
+    Field(String),
+    /// From the start of the first field through the end of the second:
+    /// `over(chunkType .. data)`.
+    Range(String, String),
 }
 
 /// A pointer-follow directive on a field: `at [+] <offset>`.

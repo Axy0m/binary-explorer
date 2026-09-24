@@ -98,6 +98,26 @@ button.ghost:hover { border-color: var(--accent); color: var(--text); filter: no
   color: var(--error); padding: 6px 12px; font-family: var(--mono); border-bottom: 1px solid var(--error); cursor: pointer;
 }
 
+/* Compare bar — summarizes the diff against a second file. Pink is the diff
+   colour throughout (edits are amber, selection is teal), so the bar, the
+   changed bytes and the changed fields all read as one thing. */
+.compare-bar {
+  display: flex; align-items: center; gap: 10px;
+  padding: 5px 12px; font-size: 12px;
+  background: color-mix(in srgb, var(--pink) 10%, var(--bg-alt));
+  border-bottom: 1px solid color-mix(in srgb, var(--pink) 35%, transparent);
+}
+.compare-bar .spacer { flex: 1; }
+.compare-bar button.ghost { padding: 1px 8px; }
+.cmp-label { color: var(--pink); font-weight: 600; font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em; }
+.cmp-name { font-family: var(--mono); color: var(--text); }
+.cmp-stat, .cmp-same { color: var(--text-dim); }
+.cmp-stat b { color: var(--pink); font-weight: 600; }
+.cmp-size { font-family: var(--mono); color: var(--amber); }
+.cmp-warn { color: var(--amber); font-size: 11px; }
+button.ghost.on { border-color: var(--pink); color: var(--pink); }
+.status-diff { color: var(--pink); }
+
 .empty-state { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; color: var(--muted); }
 .empty-state h1 { color: var(--accent); margin: 0; font-weight: 700; font-size: 34px; }
 
@@ -173,6 +193,18 @@ button.ghost:hover { border-color: var(--accent); color: var(--text); filter: no
 .tree-type { color: var(--purple); }
 .tree-desc { color: var(--muted-2); font-style: italic; overflow: hidden; text-overflow: ellipsis; max-width: 90px; white-space: nowrap; }
 .tree-value { color: var(--accent); margin-left: auto; padding-left: 10px; }
+/* A field that differs in the compared file, shown as `was -> is`. */
+.tree-row.changed { background: color-mix(in srgb, var(--pink) 9%, transparent); box-shadow: inset 2px 0 0 var(--pink); }
+.tree-row.changed.active { background: var(--sel-bg); box-shadow: inset 2px 0 0 var(--pink); }
+.tree-row.changed .tree-value { color: var(--pink); }
+.tree-was { margin-left: auto; padding-left: 10px; color: var(--muted); }
+/* The old value carries the auto margin, so the current one tucks in behind it. */
+.tree-row:has(.tree-was) .tree-value { margin-left: 4px; padding-left: 0; }
+.tree-arrow { color: var(--pink); }
+/* A `check` clause's verdict: a tick, or the value the bytes actually produce. */
+.tree-check { font-family: var(--mono); font-size: 11px; padding-left: 8px; flex: none; }
+.tree-check.ok { color: var(--green); }
+.tree-check.bad { color: var(--amber); }
 
 /* Value inspector */
 .vinspect-title { display: flex; align-items: center; gap: 7px; font-family: var(--mono); font-size: 13px; color: var(--text); margin-bottom: 10px; word-break: break-all; }
@@ -320,6 +352,12 @@ button.ghost:hover { border-color: var(--accent); color: var(--text); filter: no
 .ascii-char { display: inline-block; width: 8px; text-align: center; cursor: pointer; }
 .ascii-char.sel { background: var(--accent) !important; color: #06110f; border-radius: 2px; }
 .ascii-char.edited { color: var(--amber); box-shadow: inset 0 -2px 0 var(--amber); }
+/* Differs from the compared file; or (dimmed) exists only in this one because
+   the other file ends first. */
+.hex-byte.diffbyte { color: var(--pink); background: color-mix(in srgb, var(--pink) 16%, transparent); font-weight: 600; }
+.hex-byte.diffbyte.sel { color: #06110f; }
+.ascii-char.diffbyte { color: var(--pink); background: color-mix(in srgb, var(--pink) 16%, transparent); border-radius: 2px; }
+.hex-byte.onlya, .ascii-char.onlya { color: var(--muted-2); box-shadow: inset 0 -2px 0 var(--border); }
 
 /* Field builder — turns a dragged byte range into a schema field. It floats
    over the bottom of the hex column: laying it out inline would shift the byte
@@ -388,6 +426,14 @@ button.ghost:hover { border-color: var(--accent); color: var(--text); filter: no
 /* Editing (Phase 10) — topbar tools */
 .edit-tools { display: flex; align-items: center; gap: 5px; margin-left: 4px; padding-left: 8px; border-left: 1px solid var(--border); }
 .edit-tools button { padding: 4px 8px; font-size: 12px; }
+/* Offered only when a checksum is actually wrong, which is the state an edit
+   leaves behind — so the button appearing is itself the warning. */
+.fix-btn {
+  background: color-mix(in srgb, var(--amber) 22%, var(--panel-2));
+  color: var(--amber);
+  border: 1px solid color-mix(in srgb, var(--amber) 45%, transparent);
+  font-weight: 600;
+}
 .dirty-badge {
   font-family: var(--mono); font-size: 10.5px; color: var(--amber);
   border: 1px solid color-mix(in srgb, var(--amber) 45%, transparent);

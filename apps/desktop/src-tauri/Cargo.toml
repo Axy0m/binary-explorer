@@ -22,6 +22,7 @@ binary-reader = { workspace = true }
 analysis = { path = "../../../crates/analysis" }
 format-detection = { path = "../../../crates/format-detection" }
 search = { path = "../../../crates/search" }
+diff = { path = "../../../crates/diff" }
 schema-parser = { path = "../../../crates/schema-parser" }
 schema-runtime = { path = "../../../crates/schema-runtime" }
 file-editing = { path = "../../../crates/file-editing" }

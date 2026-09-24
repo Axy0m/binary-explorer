@@ -72,9 +72,14 @@ GzModule
 - Inline transforms — `bytes[n] decode <t> [as <Type>]` for
   `xor` / `rolling_xor` / `add` / `base64` / `zlib` / `inflate` / `gunzip`
 - Variable-length integers — `varint` / `svarint` (LEB128)
+- Checksums — `check crc32 over(chunkType .. data)` validates a field against the
+  bytes it covers (`crc32`, `adler32`, `sum8/16/32`, `xor8`)
 
 **Editing & analysis**
 - Edit bytes or typed field values in place, with undo/redo, then save
+- Recompute stale checksums in one click, so an edited file still opens
+- Diff against a second file: changed bytes marked in the hex view, changed
+  fields shown as `old → new` in the parse tree
 - Entropy strip, string extraction, timestamp detection, format guessing
 - Automatic format detection on open
 
@@ -122,7 +127,7 @@ struct Chunk {
         "IHDR"  => IhdrData
         default => bytes[length]
     }
-    crc       u32
+    crc       u32 check crc32 over(chunkType .. data)
 }
 
 struct PNG {
@@ -136,10 +141,58 @@ bytes behind any node.
 
 ---
 
+## Diffing two files
+
+Two saves, two firmware revisions, a config before and after a settings change:
+**Compare…** diffs the open file against another one, byte-aligned.
+
+Changed bytes light up in the hex view (hover one to see what it used to be), and
+the diff bar counts them and steps between regions. With a schema loaded, the
+parse tree says what actually moved:
+
+```
+PLYR
+  name: "Wren Ashgrave"
+  level    27
+  gold     41320 → 99999      # changed
+  zone     4
+```
+
+That is the thing a plain hex differ cannot tell you — not just *which bytes*
+changed, but *which field* they were.
+
+Headless, for scripts:
+
+```sh
+cargo run -p diff --example diff -- save_before.sav save_after.sav
+```
+
+---
+
+## Checksums that fix themselves
+
+Most binary formats carry a checksum, which means editing a payload normally
+breaks the file. Describe the checksum once:
+
+```
+struct PngChunk {
+    length    u32
+    chunkType char[4]
+    data      bytes[length]
+    crc       u32 check crc32 over(chunkType .. data)
+}
+```
+
+Nybble then validates it on every parse — a green tick when the file is intact,
+and when it is not, the value it *should* hold. Edit a field, and one click
+rewrites every stale checksum, so the file still opens in the tool that made it.
+
+---
+
 ## Install
 
 Download the installer for your platform from the
-[latest release](https://github.com/Majd42/binary-explorer/releases/latest):
+[latest release](https://github.com/Axy0m/binary-explorer/releases/latest):
 
 | Platform | File |
 |---|---|
@@ -214,6 +267,7 @@ crates/
   format-detection/  magic-byte format guessing
   analysis/          entropy, strings, timestamps
   search/            byte/string search
+  diff/              aligned byte comparison of two files
   file-editing/      in-place edits with undo/redo
   schema-library/    saved-schema storage
   plugin-host/       format-pack plugins

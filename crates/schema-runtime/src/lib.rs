@@ -22,10 +22,12 @@ use std::io::Read;
 
 use binary_reader::BinaryReader;
 use schema::{
-    BinOp, BitfieldDef, CompareOp, CompareValue, Condition, Decode, EnumDef, Expr, Field, Len,
-    MatchKey, Prim, Schema, StructDef, Transform, TypeExpr,
+    BinOp, BitfieldDef, Check, CheckSpan, CompareOp, CompareValue, Condition, Decode, EnumDef, Expr,
+    Field, Len, MatchKey, Prim, Schema, StructDef, Transform, TypeExpr,
 };
 use serde::{Deserialize, Serialize};
+
+pub mod checksum;
 
 pub use binary_reader::Endian;
 
@@ -55,7 +57,30 @@ pub struct FieldNode {
     /// Optional documentation carried from the schema field (empty if none).
     #[serde(default)]
     pub description: String,
+    /// Verdict of a `check` clause on this field, if it had one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub check: Option<CheckResult>,
     pub children: Vec<FieldNode>,
+}
+
+/// What a `check` clause found: the checksum the covered bytes actually produce,
+/// the value the file stores, and the span that was covered.
+///
+/// A mismatch is *not* a parse fault — the bytes decoded fine, the file is just
+/// inconsistent, which is exactly the state a half-finished edit leaves it in.
+/// Keeping the computed value here is what lets the app offer to write it back.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CheckResult {
+    /// Algorithm name as written in the schema, e.g. `"crc32"`.
+    pub algo: String,
+    /// The checksum the covered bytes produce now.
+    pub computed: u64,
+    /// The value this field holds in the file.
+    pub stored: u64,
+    pub ok: bool,
+    /// Byte span the checksum covers.
+    pub over_offset: usize,
+    pub over_size: usize,
 }
 
 /// A decoded scalar value. Composite fields use [`Value::Struct`] /
@@ -175,6 +200,19 @@ pub enum RuntimeError {
 
     #[error("varint at offset {0} runs past 10 bytes with its continuation bit still set (malformed LEB128?)")]
     VarintTooLong(usize),
+
+    #[error("`check` on field `{field}` covers `{name}`, which was not seen before this point")]
+    UnknownCheckField { field: String, name: String },
+
+    #[error("`check` on field `{0}` requires an integer field to compare against")]
+    CheckValueNotInteger(String),
+
+    #[error("`check` on field `{field}` covers a backwards range: `{first}` starts after `{last}` ends")]
+    BadCheckSpan {
+        field: String,
+        first: String,
+        last: String,
+    },
 
     #[error("base64 decode failed: {0}")]
     Base64(String),
@@ -453,8 +491,73 @@ impl Runtime<'_> {
         if let Some(dec) = &field.decode {
             node = self.decode_field(node, dec, depth)?;
         }
+        // Validate a checksum field against the bytes it covers. Done after
+        // `decode` so the two can be combined, and against the file's bytes
+        // (not decoded ones): a stored checksum describes what is on disk.
+        if let Some(chk) = &field.check {
+            node.check = Some(self.eval_check(&field.name, chk, &node, siblings)?);
+        }
         node.description = field.desc.clone().unwrap_or_default();
         Ok((node, next))
+    }
+
+    /// Recompute a `check` field's checksum over the span it names.
+    ///
+    /// The span is resolved against siblings already read in this struct, which
+    /// is what makes the clause work inside a `repeat`: each chunk's checksum
+    /// covers that chunk's own bytes, wherever it landed.
+    fn eval_check(
+        &self,
+        field_name: &str,
+        chk: &Check,
+        node: &FieldNode,
+        siblings: &[FieldNode],
+    ) -> Result<CheckResult> {
+        let find = |name: &str| -> Result<&FieldNode> {
+            // Searched from the end: with a duplicated name the nearest
+            // preceding field is the one a reader would mean.
+            siblings
+                .iter()
+                .rev()
+                .find(|n| n.name == name)
+                .ok_or_else(|| RuntimeError::UnknownCheckField {
+                    field: field_name.to_string(),
+                    name: name.to_string(),
+                })
+        };
+        let (first, last) = match &chk.span {
+            CheckSpan::Field(name) => (find(name)?, find(name)?),
+            CheckSpan::Range(a, b) => (find(a)?, find(b)?),
+        };
+        let start = first.offset;
+        let end = last.offset + last.size;
+        if end < start {
+            let (a, b) = match &chk.span {
+                CheckSpan::Field(name) => (name.clone(), name.clone()),
+                CheckSpan::Range(a, b) => (a.clone(), b.clone()),
+            };
+            return Err(RuntimeError::BadCheckSpan {
+                field: field_name.to_string(),
+                first: a,
+                last: b,
+            });
+        }
+
+        let bytes = self.reader.read_bytes_at(start, end - start)?;
+        let computed = checksum::compute(chk.algo, bytes);
+        let stored = node
+            .value
+            .as_u64()
+            .ok_or_else(|| RuntimeError::CheckValueNotInteger(field_name.to_string()))?;
+
+        Ok(CheckResult {
+            algo: chk.algo.name().to_string(),
+            computed,
+            stored,
+            ok: computed == stored,
+            over_offset: start,
+            over_size: end - start,
+        })
     }
 
     /// Build a node for a field of struct type `struct_name` at `offset`.
@@ -528,6 +631,7 @@ impl Runtime<'_> {
             offset,
             size: cursor - offset,
             description: String::new(),
+            check: None,
             children,
         })
     }
@@ -694,6 +798,7 @@ impl Runtime<'_> {
                     offset,
                     size: cursor - offset,
                     description: String::new(),
+                    check: None,
                     children,
                 })
             }
@@ -794,6 +899,7 @@ impl Runtime<'_> {
                     offset,
                     size: cursor - offset,
                     description: String::new(),
+                    check: None,
                     children,
                 })
             }
@@ -1027,6 +1133,7 @@ impl Runtime<'_> {
             offset,
             size,
             description: String::new(),
+            check: None,
             children,
         })
     }
@@ -1183,6 +1290,7 @@ fn scalar(name: &str, type_name: String, value: Value, offset: usize, size: usiz
         offset,
         size,
         description: String::new(),
+        check: None,
         children: Vec::new(),
     }
 }

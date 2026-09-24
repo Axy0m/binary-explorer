@@ -56,4 +56,10 @@ pub enum ParseError {
         found: usize,
         span: Span,
     },
+
+    #[error("unknown checksum `{name}` at line {}, col {} (try crc32, adler32, sum8, sum16, sum32, xor8)", span.line, span.col)]
+    UnknownChecksum { name: String, span: Span },
+
+    #[error("expected `over(<field>)` or `over(<first> .. <last>)` after `check {algo}` at line {}, col {}", span.line, span.col)]
+    ExpectedOver { algo: String, span: Span },
 }

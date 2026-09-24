@@ -14,7 +14,7 @@ use binary_reader::{BinaryReader, Endian};
 use file_editing::{encode_value, EditBuffer, ValueKind};
 use plugin_host::PluginManifest;
 use schema_library::Metadata;
-use schema_runtime::ParseOutcome;
+use schema_runtime::{FieldNode, ParseOutcome};
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager, State};
 
@@ -23,6 +23,8 @@ mod licensing;
 /// The currently open file, if any.
 struct AppState {
     open: Mutex<Option<OpenFile>>,
+    /// The file the open one is being compared against, if any (see `Comparison`).
+    compare: Mutex<Option<Comparison>>,
 }
 
 struct OpenFile {
@@ -93,6 +95,8 @@ fn open_file(path: String, state: State<AppState>) -> Result<FileInfo, String> {
     let reader = BinaryReader::open(&path).map_err(|e| e.to_string())?;
     let info = file_info(&path, &reader);
     *state.open.lock().unwrap() = Some(OpenFile::new(path, reader));
+    // A diff computed against the previous file says nothing about this one.
+    *state.compare.lock().unwrap() = None;
     Ok(info)
 }
 
@@ -390,28 +394,17 @@ fn parse_schema(
 ) -> Result<ParseOutcome, String> {
     let guard = state.open.lock().unwrap();
     let file = guard.as_ref().ok_or("no file open")?;
+    parse_current(file, &schema_text, &entry, &endian)
+}
 
-    let schema = schema_parser::parse(&schema_text).map_err(|e| e.to_string())?;
-
-    // Default the entry point to the first struct defined.
-    let entry = if entry.trim().is_empty() {
-        schema
-            .structs
-            .first()
-            .map(|s| s.name.clone())
-            .ok_or("schema defines no structs")?
-    } else {
-        entry
-    };
-
-    let endian = if endian.eq_ignore_ascii_case("be") {
-        Endian::Big
-    } else {
-        Endian::Little
-    };
-
-    // Parse against current bytes: the edited view when there are pending edits,
-    // otherwise the mapped file directly (no copy).
+/// Run a schema against the bytes the UI is currently showing: the edited view
+/// when there are pending edits, otherwise the mapped file directly (no copy).
+fn parse_current(
+    file: &OpenFile,
+    schema_text: &str,
+    entry: &str,
+    endian: &str,
+) -> Result<ParseOutcome, String> {
     let edited;
     let reader = if file.edits.is_dirty() {
         let base = file
@@ -423,8 +416,44 @@ fn parse_schema(
     } else {
         &file.reader
     };
+    run_schema(schema_text, entry, endian, reader)
+}
 
-    schema_runtime::parse_partial(&schema, reader, &entry, endian).map_err(|e| e.to_string())
+/// Compile a schema and execute it against `reader`.
+///
+/// Shared by the active file and by the file it is being compared against, so
+/// both trees are produced by exactly the same path — the comparison would be
+/// meaningless if the two sides could disagree about entry defaults or endianness.
+fn run_schema(
+    schema_text: &str,
+    entry: &str,
+    endian: &str,
+    reader: &BinaryReader,
+) -> Result<ParseOutcome, String> {
+    let schema = schema_parser::parse(schema_text).map_err(|e| e.to_string())?;
+
+    // Default the entry point to the first struct defined.
+    let entry = if entry.trim().is_empty() {
+        schema
+            .structs
+            .first()
+            .map(|s| s.name.clone())
+            .ok_or("schema defines no structs")?
+    } else {
+        entry.to_string()
+    };
+
+    schema_runtime::parse_partial(&schema, reader, &entry, endian_of(endian))
+        .map_err(|e| e.to_string())
+}
+
+/// Read an endianness tag from the UI (`"le"` / `"be"`), defaulting to little.
+fn endian_of(tag: &str) -> Endian {
+    if tag.eq_ignore_ascii_case("be") {
+        Endian::Big
+    } else {
+        Endian::Little
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -496,12 +525,7 @@ fn set_field_value(
     state: State<AppState>,
 ) -> Result<EditStatus, String> {
     let kind = ValueKind::from_tag(&kind).ok_or_else(|| format!("cannot edit a {kind} field"))?;
-    let endian = if endian.eq_ignore_ascii_case("be") {
-        Endian::Big
-    } else {
-        Endian::Little
-    };
-    let bytes = encode_value(kind, size, endian, &value)?;
+    let bytes = encode_value(kind, size, endian_of(&endian), &value)?;
     let o = usize::try_from(offset).map_err(|_| "offset too large".to_string())?;
 
     let mut guard = state.open.lock().unwrap();
@@ -602,6 +626,266 @@ fn save_file(state: State<AppState>) -> Result<FileInfo, String> {
 #[tauri::command]
 fn save_file_as(path: String, state: State<AppState>) -> Result<FileInfo, String> {
     save_to(&state, path, false)
+}
+
+/// Outcome of a checksum repair pass.
+#[derive(Serialize)]
+struct FixOutcome {
+    /// How many checksum fields were rewritten.
+    fixed: usize,
+    /// How many still disagree with their bytes afterwards.
+    remaining: usize,
+    status: EditStatus,
+}
+
+/// Every checksum field whose stored value disagrees with the bytes it covers,
+/// as `(field path, offset, size, value it should hold)`.
+fn collect_bad_checks(node: &FieldNode, out: &mut Vec<(String, usize, usize, u64)>) {
+    if let Some(c) = &node.check {
+        if !c.ok {
+            out.push((node.name.clone(), node.offset, node.size, c.computed));
+        }
+    }
+    for child in &node.children {
+        collect_bad_checks(child, out);
+    }
+}
+
+/// Rewrite every mismatching `check` field with the checksum its bytes actually
+/// produce, as pending (undoable) edits.
+///
+/// This is the other half of in-place editing: change a payload and the file's
+/// own checksums stop matching, which for most formats means nothing will open
+/// it. Recomputing them is mechanical, and the schema already says which bytes
+/// each one covers.
+#[tauri::command]
+fn fix_checksums(
+    schema_text: String,
+    entry: String,
+    endian: String,
+    state: State<AppState>,
+) -> Result<FixOutcome, String> {
+    /// A checksum can cover other checksums (a whole-file sum over per-chunk
+    /// CRCs), so fixing one can invalidate another; repeat until it settles.
+    const MAX_PASSES: usize = 8;
+
+    let mut guard = state.open.lock().unwrap();
+    let file = guard.as_mut().ok_or("no file open")?;
+    let e = endian_of(&endian);
+    let mut fixed = 0usize;
+
+    for _ in 0..MAX_PASSES {
+        // Scoped so the parse (which borrows the file) is done before the edits.
+        let todo = {
+            let outcome = parse_current(file, &schema_text, &entry, &endian)?;
+            let mut todo = Vec::new();
+            collect_bad_checks(&outcome.tree, &mut todo);
+            todo
+        };
+        if todo.is_empty() {
+            break;
+        }
+        let before = fixed;
+        for (name, offset, size, computed) in todo {
+            let bytes = encode_value(ValueKind::Unsigned, size, e, &computed.to_string())
+                .map_err(|err| format!("cannot write the checksum for `{name}`: {err}"))?;
+            file.edits
+                .set_bytes(offset, &bytes)
+                .map_err(|err| err.to_string())?;
+            fixed += 1;
+        }
+        // Defensive: a pass that fixed nothing would loop forever.
+        if fixed == before {
+            break;
+        }
+    }
+
+    // Re-parse once more so the count reported is what the file now says, not
+    // what we hoped writing would achieve.
+    let remaining = {
+        let outcome = parse_current(file, &schema_text, &entry, &endian)?;
+        let mut todo = Vec::new();
+        collect_bad_checks(&outcome.tree, &mut todo);
+        todo.len()
+    };
+
+    Ok(FixOutcome {
+        fixed,
+        remaining,
+        status: edit_status_of(file),
+    })
+}
+
+// ---------------------------------------------------------------------------
+// Compare against another file (aligned byte diff)
+// ---------------------------------------------------------------------------
+
+/// The file the open one is being compared against, plus the computed diff.
+///
+/// The diff is computed up front (and again on demand after an edit) rather
+/// than per query, because the UI asks about it constantly — every visible hex
+/// row, every field in the tree — and a stored run list answers all of that
+/// with a binary search.
+struct Comparison {
+    path: String,
+    reader: BinaryReader,
+    diff: diff::Diff,
+}
+
+/// Summary of the active comparison, for the diff bar.
+#[derive(Serialize, Clone)]
+struct CompareStatus {
+    path: String,
+    name: String,
+    /// Length of the open file, and of the one it is compared against.
+    a_len: u64,
+    b_len: u64,
+    /// Differing bytes within the length the two files share.
+    changed_bytes: u64,
+    /// How many separate regions those bytes form.
+    region_count: usize,
+    /// True when the region list hit its cap. Counts stay exact.
+    truncated: bool,
+    identical: bool,
+    /// Start of the first changed region, for "jump to the first change".
+    first_change: Option<u64>,
+}
+
+/// The open file's bytes as the UI sees them: the mapped file when clean, a
+/// materialized copy when edits are pending — so a diff describes what is on
+/// screen rather than what is still on disk.
+fn current_bytes(file: &OpenFile) -> Result<std::borrow::Cow<'_, [u8]>, String> {
+    let base = file
+        .reader
+        .read_bytes_at(0, file.reader.len())
+        .map_err(|e| e.to_string())?;
+    Ok(if file.edits.is_dirty() {
+        std::borrow::Cow::Owned(file.edits.materialize(base))
+    } else {
+        std::borrow::Cow::Borrowed(base)
+    })
+}
+
+fn compare_status_of(path: &str, d: &diff::Diff) -> CompareStatus {
+    CompareStatus {
+        path: path.to_string(),
+        name: Path::new(path)
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_else(|| path.to_string()),
+        a_len: d.a_len(),
+        b_len: d.b_len(),
+        changed_bytes: d.changed_bytes(),
+        region_count: d.runs().len(),
+        truncated: d.truncated(),
+        identical: d.is_identical(),
+        first_change: d.first_run().map(|r| r.offset),
+    }
+}
+
+fn diff_against(file: &OpenFile, other: &BinaryReader) -> Result<diff::Diff, String> {
+    let a = current_bytes(file)?;
+    let b = other
+        .read_bytes_at(0, other.len())
+        .map_err(|e| e.to_string())?;
+    Ok(diff::compare(&a, b))
+}
+
+/// Compare the open file against the one at `path` and keep the result active.
+#[tauri::command]
+fn compare_open(path: String, state: State<AppState>) -> Result<CompareStatus, String> {
+    let guard = state.open.lock().unwrap();
+    let file = guard.as_ref().ok_or("no file open")?;
+    let reader = BinaryReader::open(&path).map_err(|e| e.to_string())?;
+    let d = diff_against(file, &reader)?;
+    let status = compare_status_of(&path, &d);
+    *state.compare.lock().unwrap() = Some(Comparison {
+        path,
+        reader,
+        diff: d,
+    });
+    Ok(status)
+}
+
+/// Drop the active comparison.
+#[tauri::command]
+fn compare_close(state: State<AppState>) {
+    *state.compare.lock().unwrap() = None;
+}
+
+/// Summary of the active comparison, or `null` if none.
+#[tauri::command]
+fn compare_status(state: State<AppState>) -> Option<CompareStatus> {
+    state
+        .compare
+        .lock()
+        .unwrap()
+        .as_ref()
+        .map(|c| compare_status_of(&c.path, &c.diff))
+}
+
+/// Recompute the diff. An edit changes the open file's bytes out from under the
+/// stored run list, so the UI refreshes it after one lands.
+#[tauri::command]
+fn compare_refresh(state: State<AppState>) -> Result<Option<CompareStatus>, String> {
+    let guard = state.open.lock().unwrap();
+    let mut compare = state.compare.lock().unwrap();
+    let Some(c) = compare.as_mut() else {
+        return Ok(None);
+    };
+    let file = guard.as_ref().ok_or("no file open")?;
+    let d = diff_against(file, &c.reader)?;
+    c.diff = d;
+    Ok(Some(compare_status_of(&c.path, &c.diff)))
+}
+
+/// Read a window of bytes from the file being compared against. The hex view
+/// pages these in alongside the open file's own bytes, which is what lets it
+/// mark exactly which bytes differ and show what each one used to be.
+#[tauri::command]
+fn compare_read(offset: u64, length: u32, state: State<AppState>) -> Result<ByteWindow, String> {
+    let guard = state.compare.lock().unwrap();
+    let c = guard.as_ref().ok_or("no comparison open")?;
+
+    let o = usize::try_from(offset).map_err(|_| "offset too large".to_string())?;
+    // Clamp like `read_range` does, so a window at the end of the shorter file
+    // returns what exists instead of erroring.
+    let remaining = c.reader.len().saturating_sub(o);
+    let len = (length as usize).min(remaining);
+    let bytes = c.reader.read_bytes_at(o, len).map_err(|e| e.to_string())?;
+
+    Ok(ByteWindow {
+        offset,
+        len: len as u32,
+        base64: base64::engine::general_purpose::STANDARD.encode(bytes),
+    })
+}
+
+/// Start of the next changed region after `from`, or the previous one before it.
+#[tauri::command]
+fn compare_seek(from: u64, forward: bool, state: State<AppState>) -> Option<u64> {
+    let guard = state.compare.lock().unwrap();
+    let c = guard.as_ref()?;
+    let run = if forward {
+        c.diff.next_run(from)
+    } else {
+        c.diff.prev_run(from)
+    };
+    run.map(|r| r.offset)
+}
+
+/// Execute the current schema against the file being compared, so the tree can
+/// show each field's other value next to its own ("gold: 41320 → 99999").
+#[tauri::command]
+fn compare_parse(
+    schema_text: String,
+    entry: String,
+    endian: String,
+    state: State<AppState>,
+) -> Result<ParseOutcome, String> {
+    let guard = state.compare.lock().unwrap();
+    let c = guard.as_ref().ok_or("no comparison open")?;
+    run_schema(&schema_text, &entry, &endian, &c.reader)
 }
 
 // ---------------------------------------------------------------------------
@@ -1218,7 +1502,7 @@ fn plugin_set_enabled(app: AppHandle, id: String, enabled: bool) -> Result<(), S
 // file is ever uploaded (browsing/installing is download-only).
 
 /// Base URL of the format registry (raw files on the `main` branch).
-const REGISTRY_BASE: &str = "https://raw.githubusercontent.com/Majd42/nybble-registry/main";
+const REGISTRY_BASE: &str = "https://raw.githubusercontent.com/Axy0m/nybble-registry/main";
 
 /// One format contributed by a registry entry (mirrors the registry index).
 #[derive(Serialize, Deserialize)]
@@ -1320,6 +1604,7 @@ pub fn run() {
         .setup(|app| {
             app.manage(AppState {
                 open: Mutex::new(None),
+                compare: Mutex::new(None),
             });
             Ok(())
         })
@@ -1345,6 +1630,14 @@ pub fn run() {
             revert_edits,
             save_file,
             save_file_as,
+            fix_checksums,
+            compare_open,
+            compare_close,
+            compare_status,
+            compare_refresh,
+            compare_read,
+            compare_seek,
+            compare_parse,
             library_list,
             library_load,
             library_add,

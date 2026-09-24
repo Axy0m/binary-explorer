@@ -565,6 +565,61 @@ fn repeat_without_until_parses() {
     }
 }
 
+// --- check / checksums ------------------------------------------------------
+
+#[test]
+fn check_clause_parses_a_single_field_span() {
+    let schema = parse("struct S { data bytes[8]  sum u8 check sum8 over(data) }").expect("should parse");
+    let c = schema.structs[0].fields[1].check.as_ref().expect("has check");
+    assert_eq!(c.algo, schema::Checksum::Sum8);
+    assert_eq!(c.span, schema::CheckSpan::Field("data".into()));
+}
+
+#[test]
+fn check_clause_parses_a_field_range() {
+    let schema = parse(
+        "struct Chunk { tag char[4]  data bytes[4]  crc u32 check crc32 over(tag .. data) }",
+    )
+    .expect("should parse");
+    let c = schema.structs[0].fields[2].check.as_ref().unwrap();
+    assert_eq!(c.algo, schema::Checksum::Crc32);
+    assert_eq!(c.span, schema::CheckSpan::Range("tag".into(), "data".into()));
+}
+
+#[test]
+fn check_composes_with_a_description_and_a_condition() {
+    let schema = parse(
+        "struct S { flags u8  data bytes[4]  crc u32 check crc32 over(data) if flags == 1 \"chunk crc\" }",
+    )
+    .expect("should parse");
+    let f = &schema.structs[0].fields[2];
+    assert!(f.check.is_some());
+    assert!(f.condition.is_some());
+    assert_eq!(f.desc.as_deref(), Some("chunk crc"));
+}
+
+#[test]
+fn check_unknown_algorithm_is_rejected() {
+    let err = parse("struct S { d bytes[4]  c u32 check fletcher over(d) }").unwrap_err();
+    assert!(matches!(err, ParseError::UnknownChecksum { .. }), "got {err:?}");
+}
+
+#[test]
+fn check_without_over_is_rejected() {
+    let err = parse("struct S { d bytes[4]  c u32 check crc32 (d) }").unwrap_err();
+    assert!(matches!(err, ParseError::ExpectedOver { .. }), "got {err:?}");
+}
+
+#[test]
+fn every_checksum_name_round_trips() {
+    for name in ["crc32", "adler32", "sum8", "sum16", "sum32", "xor8"] {
+        let src = format!("struct S {{ d bytes[4]  c u32 check {name} over(d) }}");
+        let schema = parse(&src).unwrap_or_else(|e| panic!("{name} should parse: {e}"));
+        let algo = schema.structs[0].fields[1].check.as_ref().unwrap().algo;
+        assert_eq!(algo.name(), name);
+    }
+}
+
 // --- decode / transforms (Phase 13) ----------------------------------------
 
 #[test]

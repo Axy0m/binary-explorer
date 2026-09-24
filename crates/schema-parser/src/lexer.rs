@@ -34,6 +34,8 @@ pub enum TokenKind {
     Until,
     /// The `decode` keyword (a byte transform on a field).
     Decode,
+    /// The `check` keyword (a checksum clause on a field).
+    Check,
     /// The `as` keyword (re-parse decoded bytes as a type).
     As,
     /// `,` — separates transform arguments, e.g. `rolling_xor(90, 31, 17)`.
@@ -118,6 +120,7 @@ impl TokenKind {
             TokenKind::Repeat => "keyword `repeat`".into(),
             TokenKind::Until => "keyword `until`".into(),
             TokenKind::Decode => "keyword `decode`".into(),
+            TokenKind::Check => "keyword `check`".into(),
             TokenKind::As => "keyword `as`".into(),
             TokenKind::Comma => "`,`".into(),
             TokenKind::FatArrow => "`=>`".into(),
@@ -417,6 +420,7 @@ impl<'a> Lexer<'a> {
             "repeat" => TokenKind::Repeat,
             "until" => TokenKind::Until,
             "decode" => TokenKind::Decode,
+            "check" => TokenKind::Check,
             "as" => TokenKind::As,
             _ => TokenKind::Ident(text.to_string()),
         }

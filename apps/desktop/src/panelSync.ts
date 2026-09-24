@@ -42,6 +42,10 @@ export interface UiSnapshot {
   /** Where the last parse stopped, so the schema pop-out shows the same bar. */
   fault: Fault | null;
   editVersion: number;
+  /** The file being compared against, so a popped-out hex view marks the same
+   *  differing bytes and a popped-out tree shows the same before values. */
+  compare: { name: string; bLen: number } | null;
+  compareVersion: number;
 }
 
 /** An action a pop-out panel sends back to the main window. */

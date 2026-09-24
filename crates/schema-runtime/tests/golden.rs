@@ -159,13 +159,20 @@ fn write_node(out: &mut String, node: &FieldNode, depth: usize) {
     } else {
         format!(" = {value}")
     };
+    // A checksum verdict is part of what the schema decided, so it belongs in
+    // the snapshot: `[crc32 ok]`, or the value a correct file would carry.
+    let check = match &node.check {
+        None => String::new(),
+        Some(c) if c.ok => format!("  [{} ok]", c.algo),
+        Some(c) => format!("  [{} MISMATCH computed {:#x}]", c.algo, c.computed),
+    };
     let desc = if node.description.is_empty() {
         String::new()
     } else {
         format!("  // {}", node.description)
     };
     out.push_str(&format!(
-        "{indent}{}: {}{val}  [@{} +{}]{desc}\n",
+        "{indent}{}: {}{val}  [@{} +{}]{check}{desc}\n",
         node.name, node.type_name, node.offset, node.size
     ));
     for c in &node.children {
@@ -213,12 +220,12 @@ fn golden_png() {
         .u8(0) // compression
         .u8(0) // filter
         .u8(0) // interlace -> None
-        .u32be(0x12345678) // crc (arbitrary)
+        .u32be(0x1F15C489) // crc - real CRC-32 of "IHDR" + the 13 data bytes
         // -- IDAT chunk (left raw by the default arm) --
         .u32be(4) // data length
         .ascii("IDAT")
         .raw(&[0xDE, 0xAD, 0xBE, 0xEF]) // opaque data
-        .u32be(0x9ABCDEF0) // crc
+        .u32be(0xB7FB9B41) // crc - real CRC-32 of "IDAT" + de ad be ef
         // -- IEND chunk (terminator, zero-length) --
         .u32be(0)
         .ascii("IEND")

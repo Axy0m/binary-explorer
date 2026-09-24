@@ -67,6 +67,22 @@ export type Value =
   | { kind: "enum"; value: { value: number; name: string | null } }
   | { kind: "bitfield" };
 
+/** The verdict of a schema `check` clause. Mirrors `schema_runtime::CheckResult`.
+ *  A mismatch is not a parse error — the bytes decoded, the file is just no
+ *  longer self-consistent, and `computed` is the value that would fix it. */
+export interface CheckResult {
+  /** Algorithm as written in the schema, e.g. "crc32". */
+  algo: string;
+  /** What the covered bytes produce now. */
+  computed: number;
+  /** What the file stores in this field. */
+  stored: number;
+  ok: boolean;
+  /** The byte span the checksum covers. */
+  over_offset: number;
+  over_size: number;
+}
+
 /** A node in the parsed structure tree. Mirrors `schema_runtime::FieldNode`. */
 export interface FieldNode {
   name: string;
@@ -75,6 +91,8 @@ export interface FieldNode {
   offset: number;
   size: number;
   description: string;
+  /** Present only on fields carrying a `check` clause. */
+  check?: CheckResult;
   children: FieldNode[];
 }
 
@@ -248,6 +266,25 @@ export function redoEdit(): Promise<EditStatus> {
 
 export function revertEdits(): Promise<EditStatus> {
   return invoke<EditStatus>("revert_edits");
+}
+
+/** Result of a checksum repair pass. Mirrors the Rust `FixOutcome`. */
+export interface FixOutcome {
+  /** How many checksum fields were rewritten. */
+  fixed: number;
+  /** How many still disagree with their bytes afterwards. */
+  remaining: number;
+  status: EditStatus;
+}
+
+/** Rewrite every mismatching `check` field with the checksum its bytes produce,
+ *  as pending (undoable) edits. */
+export function fixChecksums(
+  schemaText: string,
+  entry: string,
+  endian: Endianness,
+): Promise<FixOutcome> {
+  return invoke<FixOutcome>("fix_checksums", { schemaText, entry, endian });
 }
 
 /** Save pending edits in place (backs up the original to `<path>.bak`). */
@@ -433,6 +470,66 @@ export function registryCatalog(): Promise<RegistryCatalog> {
 /** Download a registry pack by its index `path` and install it locally. */
 export function registryInstall(path: string): Promise<PluginInfo> {
   return invoke<PluginInfo>("registry_install", { path });
+}
+
+// --- Compare against another file ------------------------------------------
+
+/** Summary of an active comparison. Mirrors the Rust `CompareStatus`. */
+export interface CompareStatus {
+  path: string;
+  name: string;
+  /** Length of the open file, and of the one it is compared against. */
+  a_len: number;
+  b_len: number;
+  /** Differing bytes within the length the two files share. */
+  changed_bytes: number;
+  /** How many separate regions those bytes form. */
+  region_count: number;
+  /** True when the region list hit its cap; the counts are still exact. */
+  truncated: boolean;
+  identical: boolean;
+  /** Start of the first changed region, for "jump to the first change". */
+  first_change: number | null;
+}
+
+/** Compare the open file against another one and keep the diff active. */
+export function compareOpen(path: string): Promise<CompareStatus> {
+  return invoke<CompareStatus>("compare_open", { path });
+}
+
+/** Drop the active comparison. */
+export function compareClose(): Promise<void> {
+  return invoke<void>("compare_close");
+}
+
+/** Summary of the active comparison, or null if none. */
+export function compareStatus(): Promise<CompareStatus | null> {
+  return invoke<CompareStatus | null>("compare_status");
+}
+
+/** Recompute the diff after the open file's bytes changed (an edit, a save). */
+export function compareRefresh(): Promise<CompareStatus | null> {
+  return invoke<CompareStatus | null>("compare_refresh");
+}
+
+/** Read a window of bytes from the file being compared against. */
+export async function compareRead(offset: number, length: number): Promise<Uint8Array> {
+  const w = await invoke<ByteWindow>("compare_read", { offset, length });
+  return base64ToBytes(w.base64);
+}
+
+/** Start of the next changed region after `from` (or the previous one). */
+export function compareSeek(from: number, forward: boolean): Promise<number | null> {
+  return invoke<number | null>("compare_seek", { from, forward });
+}
+
+/** Run the current schema against the compared file, for old -> new values. */
+export function compareParse(
+  schemaText: string,
+  entry: string,
+  endian: Endianness,
+): Promise<ParseOutcome> {
+  return invoke<ParseOutcome>("compare_parse", { schemaText, entry, endian });
 }
 
 function base64ToBytes(b64: string): Uint8Array {

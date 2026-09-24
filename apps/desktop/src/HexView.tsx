@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { readRange } from "./api";
+import { compareRead, readRange } from "./api";
 
 const BYTES_PER_ROW = 16;
 const ROW_HEIGHT = 20; // px, must match .hex-row height in styles.css
@@ -19,6 +19,11 @@ interface Props {
   isEdited?: (offset: number) => boolean;
   /** Bumped after any edit/undo/redo so cached byte pages are re-fetched. */
   editVersion?: number;
+  /** Set while comparing against another file: differing bytes are marked, and
+   *  `bLen` says how long that file is (bytes past it exist only here). */
+  compare?: { bLen: number } | null;
+  /** Bumped when the comparison changes, so cached other-file pages are dropped. */
+  compareVersion?: number;
   onSelect: (offset: number) => void;
   /** The dragged byte range `[start, end)`, drawn as the active selection. */
   selection?: { start: number; end: number } | null;
@@ -36,7 +41,7 @@ interface Props {
  */
 export function HexView({
   fileLen, selected, highlight, mode, colorAt, isEdited, editVersion = 0,
-  onSelect, selection = null, onSelectRange,
+  onSelect, selection = null, onSelectRange, compare = null, compareVersion = 0,
 }: Props) {
   const scrollerRef = useRef<HTMLDivElement>(null);
   const [scrollTop, setScrollTop] = useState(0);
@@ -47,6 +52,12 @@ export function HexView({
   const inflightRef = useRef<Set<number>>(new Set());
   const lastEditVersion = useRef(editVersion);
   const [, setPageVersion] = useState(0);
+
+  // The compared file is paged in the same way and at the same offsets, so a
+  // byte can be checked against its counterpart without shipping a run list.
+  const otherPagesRef = useRef<Map<number, Uint8Array>>(new Map());
+  const otherInflightRef = useRef<Set<number>>(new Set());
+  const lastCompareVersion = useRef(compareVersion);
 
   const totalRows = Math.max(1, Math.ceil(fileLen / BYTES_PER_ROW));
 
@@ -96,6 +107,40 @@ export function HexView({
         .finally(() => inflightRef.current.delete(page));
     }
   }, [firstVisibleRow, lastVisibleRow, fileLen, editVersion]);
+
+  // Fetch the same pages from the compared file. Nothing is marked until its
+  // page has actually arrived, so bytes never flash as "changed" while loading.
+  useEffect(() => {
+    if (!compare) {
+      otherPagesRef.current.clear();
+      otherInflightRef.current.clear();
+      return;
+    }
+    if (lastCompareVersion.current !== compareVersion) {
+      otherPagesRef.current.clear();
+      otherInflightRef.current.clear();
+      lastCompareVersion.current = compareVersion;
+    }
+    const firstByte = firstVisibleRow * BYTES_PER_ROW;
+    const lastByte = lastVisibleRow * BYTES_PER_ROW;
+    const firstPage = Math.floor(firstByte / PAGE_BYTES);
+    const lastPage = Math.floor(Math.max(firstByte, lastByte - 1) / PAGE_BYTES);
+
+    for (let page = firstPage; page <= lastPage; page++) {
+      if (otherPagesRef.current.has(page) || otherInflightRef.current.has(page)) continue;
+      const offset = page * PAGE_BYTES;
+      const length = Math.min(PAGE_BYTES, compare.bLen - offset);
+      if (length <= 0) continue; // past the end of the other file
+      otherInflightRef.current.add(page);
+      compareRead(offset, length)
+        .then((bytes) => {
+          otherPagesRef.current.set(page, bytes);
+          setPageVersion((v) => v + 1);
+        })
+        .catch((e) => console.error("compare_read failed", e))
+        .finally(() => otherInflightRef.current.delete(page));
+    }
+  }, [firstVisibleRow, lastVisibleRow, compare, compareVersion]);
 
   // Keep the selected byte on screen when it changes (used by "jump to offset").
   useEffect(() => {
@@ -210,6 +255,14 @@ export function HexView({
     return idx < arr.length ? arr[idx] : undefined;
   }, []);
 
+  const otherByteAt = useCallback((offset: number): number | undefined => {
+    const page = Math.floor(offset / PAGE_BYTES);
+    const arr = otherPagesRef.current.get(page);
+    if (!arr) return undefined;
+    const idx = offset - page * PAGE_BYTES;
+    return idx < arr.length ? arr[idx] : undefined;
+  }, []);
+
   const onScroll = (e: React.UIEvent<HTMLDivElement>) => {
     setScrollTop(e.currentTarget.scrollTop);
   };
@@ -228,6 +281,8 @@ export function HexView({
         mode={mode}
         colorAt={colorAt}
         isEdited={isEdited}
+        compare={compare}
+        otherByteAt={otherByteAt}
         onSelect={onSelect}
       />,
     );
@@ -260,10 +315,15 @@ interface RowProps {
   mode: "hex" | "text";
   colorAt?: (offset: number) => string | undefined;
   isEdited?: (offset: number) => boolean;
+  compare: { bLen: number } | null;
+  otherByteAt: (offset: number) => number | undefined;
   onSelect: (offset: number) => void;
 }
 
-function HexRow({ row, fileLen, byteAt, selected, highlight, selection, mode, colorAt, isEdited, onSelect }: RowProps) {
+function HexRow({
+  row, fileLen, byteAt, selected, highlight, selection, mode, colorAt, isEdited,
+  compare, otherByteAt, onSelect,
+}: RowProps) {
   const base = row * BYTES_PER_ROW;
   const hexCells = [];
   const asciiCells = [];
@@ -276,9 +336,20 @@ function HexRow({ row, fileLen, byteAt, selected, highlight, selection, mode, co
     const inRange = highlight != null && offset >= highlight.start && offset < highlight.end;
     const picked = selection != null && offset >= selection.start && offset < selection.end;
     const edited = inFile && isEdited != null && isEdited(offset);
+    // Diff state: a byte that differs from its counterpart, or one that has no
+    // counterpart at all because the other file ends first.
+    const other = compare && inFile ? otherByteAt(offset) : undefined;
+    const beyond = compare != null && inFile && offset >= compare.bLen;
+    const differs = other !== undefined && b !== undefined && other !== b;
     const cls =
       (isSel ? " sel" : "") + (inRange ? " inrange" : "") +
-      (picked ? " picked" : "") + (edited ? " edited" : "");
+      (picked ? " picked" : "") + (edited ? " edited" : "") +
+      (differs ? " diffbyte" : beyond ? " onlya" : "");
+    const diffTitle = differs
+      ? `was ${other.toString(16).padStart(2, "0").toUpperCase()}`
+      : beyond
+        ? "only in this file"
+        : undefined;
     // Field tint only shows when the byte isn't the active selection/highlight.
     const col = !isSel && !inRange && !picked && inFile ? colorAt?.(offset) : undefined;
     const tint = col ? { background: `color-mix(in srgb, ${col} 24%, transparent)` } : undefined;
@@ -288,6 +359,7 @@ function HexRow({ row, fileLen, byteAt, selected, highlight, selection, mode, co
         key={i}
         className={"hex-byte" + cls + (i === 8 ? " gap" : "")}
         style={tint}
+        title={diffTitle}
         data-off={inFile ? offset : undefined}
         onClick={inFile ? () => onSelect(offset) : undefined}
       >
@@ -300,6 +372,7 @@ function HexRow({ row, fileLen, byteAt, selected, highlight, selection, mode, co
         key={i}
         className={"ascii-char" + cls}
         style={tint}
+        title={diffTitle}
         data-off={inFile ? offset : undefined}
         onClick={inFile ? () => onSelect(offset) : undefined}
       >

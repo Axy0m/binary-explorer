@@ -26,6 +26,13 @@ import {
   libraryRemove,
   exportSchema,
   importSchema,
+  compareOpen,
+  compareClose,
+  compareRefresh,
+  compareSeek,
+  compareParse,
+  fixChecksums,
+  type CompareStatus,
   type SchemaEntry,
   type SearchKind,
   type BuiltinSchema,
@@ -55,7 +62,7 @@ import {
   type PanelId,
   type UiSnapshot,
 } from "./panelSync";
-import { StructureTree, findFieldAtOffset } from "./StructureTree";
+import { StructureTree, countBadChecks, findFieldAtOffset } from "./StructureTree";
 import { ValueInspector } from "./ValueInspector";
 import { DataPreview } from "./DataPreview";
 import { EntropyStrip } from "./EntropyStrip";
@@ -114,6 +121,19 @@ export function App() {
   // field builder only opens once the drag ends.
   const [dragging, setDragging] = useState(false);
 
+  // Comparison against a second file. `otherTree` is the same schema run against
+  // it, which is what lets the tree show `was -> is` per field.
+  const [compare, setCompare] = useState<CompareStatus | null>(null);
+  const [otherTree, setOtherTree] = useState<FieldNode | null>(null);
+  /** Bumped whenever the comparison changes, so the hex view drops its cached
+   *  pages of the other file. */
+  const [compareVersion, setCompareVersion] = useState(0);
+  // Kept stable so the hex view's fetch effect doesn't re-run every render.
+  const hexCompare = useMemo(
+    () => (compare ? { bLen: compare.b_len } : null),
+    [compare],
+  );
+
   // Schema library (Phase 12).
   const [library, setLibrary] = useState<SchemaEntry[]>([]);
   const [showPlugins, setShowPlugins] = useState(false);
@@ -145,6 +165,10 @@ export function App() {
   const dirtySet = useMemo(() => new Set(edit?.dirty_offsets ?? []), [edit]);
   const isEdited = (offset: number) => dirtySet.has(offset);
 
+  // Checksum fields whose value no longer matches the bytes they cover — the
+  // normal state after editing a payload, and the cue to offer a repair.
+  const badChecks = useMemo(() => (tree ? countBadChecks(tree) : 0), [tree]);
+
   // Field colors, shared by the hex view and the parse tree.
   const colorMap = useMemo(() => buildColorMap(tree), [tree]);
   const colorFor = (offset: number) => colorAtRange(colorMap, offset);
@@ -167,10 +191,12 @@ export function App() {
       schemaError,
       fault,
       editVersion,
+      compare: compare ? { name: compare.name, bLen: compare.b_len } : null,
+      compareVersion,
     };
     snapRef.current = snap;
     broadcastSnapshot(snap);
-  }, [file, selected, highlight, selection, endian, viewMode, schemaText, entry, schemaError, fault, editVersion]);
+  }, [file, selected, highlight, selection, endian, viewMode, schemaText, entry, schemaError, fault, editVersion, compare, compareVersion]);
 
   // Apply an action sent up by a pop-out panel. Held in a ref because the
   // listener below is registered once on mount: schema/entry edits and
@@ -251,6 +277,9 @@ export function App() {
       setRawBytes(null);
       setSelection(null);
       setDragging(false);
+      setCompare(null);
+      setOtherTree(null);
+      setCompareVersion((v) => v + 1);
       setGuesses([]);
       setMatches([]);
       setMatchIndex(0);
@@ -535,6 +564,69 @@ export function App() {
     }
   }
 
+  // --- Compare against another file -----------------------------------------
+
+  /** Pick a second file and diff the open one against it. */
+  async function handleCompare() {
+    setError(null);
+    try {
+      const path = await open({ multiple: false, directory: false, title: "Compare against…" });
+      if (typeof path !== "string") return; // cancelled
+      const st = await compareOpen(path);
+      setCompare(st);
+      setCompareVersion((v) => v + 1);
+      // Land on the first difference: with a diff open, that is what you came for.
+      if (st.first_change != null) selectByte(st.first_change);
+    } catch (e) {
+      setError(String(e));
+    }
+  }
+
+  async function handleCompareClose() {
+    try {
+      await compareClose();
+    } catch (e) {
+      setError(String(e));
+    }
+    setCompare(null);
+    setOtherTree(null);
+    setCompareVersion((v) => v + 1);
+  }
+
+  /** Step to the next (or previous) changed region. */
+  async function stepChange(forward: boolean) {
+    if (!compare) return;
+    try {
+      const next =
+        selected == null
+          ? forward
+            ? compare.first_change
+            : await compareSeek(compare.a_len, false)
+          : await compareSeek(selected, forward);
+      if (next != null) selectByte(next);
+    } catch (e) {
+      setError(String(e));
+    }
+  }
+
+  // Run the schema against the compared file too, so every field can show what
+  // it held there. Keyed on `tree`, which is replaced by every parse — that is
+  // exactly when the other side needs re-running.
+  useEffect(() => {
+    if (!compare || tree == null) {
+      setOtherTree(null);
+      return;
+    }
+    let alive = true;
+    compareParse(schemaText, entry, endian)
+      .then((out) => alive && setOtherTree(out.tree))
+      .catch(() => alive && setOtherTree(null));
+    return () => {
+      alive = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [compare, tree]);
+
   // Drag a column divider. The right column grows when dragged leftwards, so
   // its handle is inverted; the hex column absorbs the slack either way.
   function startResize(which: "tree" | "vinspect" | "right", e: React.PointerEvent) {
@@ -607,6 +699,15 @@ export function App() {
     if (selectedNode && selectedNode.size > 0) {
       readRange(selectedNode.offset, Math.min(selectedNode.size, 32)).then(setRawBytes).catch(() => {});
     }
+    // An edit moves the open file away from what the diff was computed against.
+    if (compare) {
+      try {
+        setCompare(await compareRefresh());
+        setCompareVersion((v) => v + 1);
+      } catch {
+        /* keep showing the previous diff rather than dropping the comparison */
+      }
+    }
   }
 
   // Commit an edited value for the selected field. Returns an error message to
@@ -621,6 +722,22 @@ export function App() {
       return null;
     } catch (e) {
       return String(e);
+    }
+  }
+
+  /** Rewrite mismatching checksums with the values their bytes produce. */
+  async function handleFixChecksums() {
+    try {
+      const out = await fixChecksums(schemaText, entry, endian);
+      await refreshAfterEdit(out.status);
+      if (out.remaining > 0) {
+        setError(
+          `Fixed ${out.fixed} checksum(s); ${out.remaining} still do not match. ` +
+            "A checksum that covers itself, or a field too narrow for the value, cannot be repaired this way.",
+        );
+      }
+    } catch (e) {
+      setError(String(e));
     }
   }
 
@@ -698,6 +815,15 @@ export function App() {
         <span className="brand">Nybble</span>
         <button onClick={handleOpen}>Open File…</button>
         <button className="ghost" onClick={() => setShowPlugins(true)} title="Manage format plugins">Plugins</button>
+        {file && (
+          <button
+            className={"ghost" + (compare ? " on" : "")}
+            onClick={handleCompare}
+            title="Diff this file against another one"
+          >
+            Compare…
+          </button>
+        )}
         {file && <span className="tab">{file.name}</span>}
 
         {file && (
@@ -758,6 +884,15 @@ export function App() {
                 ● {edit?.dirty_count ?? 0} edited
               </span>
             )}
+            {badChecks > 0 && (
+              <button
+                className="fix-btn"
+                onClick={handleFixChecksums}
+                title="Rewrite each mismatching checksum with the value its bytes produce"
+              >
+                Fix {badChecks} checksum{badChecks === 1 ? "" : "s"}
+              </button>
+            )}
             <button className="ghost" onClick={handleUndo} disabled={!edit?.can_undo} title="Undo (Ctrl+Z)">↶</button>
             <button className="ghost" onClick={handleRedo} disabled={!edit?.can_redo} title="Redo (Ctrl+Y)">↷</button>
             <button className="ghost" onClick={handleRevert} disabled={!dirty} title="Discard all edits">Revert</button>
@@ -777,6 +912,38 @@ export function App() {
         </div>
       ) : (
         <>
+        {compare && (
+          <div className="compare-bar">
+            <span className="cmp-label">diff vs</span>
+            <span className="cmp-name" title={compare.path}>{compare.name}</span>
+            {compare.identical ? (
+              <span className="cmp-same">byte-for-byte identical</span>
+            ) : (
+              <>
+                <span className="cmp-stat">
+                  <b>{compare.changed_bytes.toLocaleString()}</b> bytes differ in{" "}
+                  <b>{compare.region_count.toLocaleString()}</b>{" "}
+                  {compare.region_count === 1 ? "region" : "regions"}
+                </span>
+                {compare.a_len !== compare.b_len && (
+                  <span className="cmp-size" title="This file is longer/shorter than the other one">
+                    size {compare.a_len > compare.b_len ? "+" : "−"}
+                    {Math.abs(compare.a_len - compare.b_len).toLocaleString()} B
+                  </span>
+                )}
+                {compare.truncated && (
+                  <span className="cmp-warn" title="Too many regions to list them all — the byte count is still exact">
+                    list capped
+                  </span>
+                )}
+                <button className="ghost" onClick={() => stepChange(false)} title="Previous change">‹</button>
+                <button className="ghost" onClick={() => stepChange(true)} title="Next change">›</button>
+              </>
+            )}
+            <div className="spacer" />
+            <button className="ghost" onClick={handleCompareClose} title="Stop comparing">Close</button>
+          </div>
+        )}
         <FileMap
           fileLen={file.len}
           root={tree}
@@ -803,6 +970,7 @@ export function App() {
                   activePath={activePath}
                   colorFor={colorFor}
                   fault={fault}
+                  otherRoot={otherTree}
                   onSelect={selectField}
                 />
               ) : (
@@ -870,6 +1038,8 @@ export function App() {
               colorAt={colorFor}
               isEdited={isEdited}
               editVersion={editVersion}
+              compare={hexCompare}
+              compareVersion={compareVersion}
               onSelect={selectByte}
               selection={selection}
               onSelectRange={pickRange}
@@ -1025,6 +1195,12 @@ export function App() {
             )}
             <span>· {file.len.toLocaleString()} B</span>
             <span>· {endian === "le" ? "little-endian" : "big-endian"}</span>
+            {compare && (
+              <span className="status-diff">
+                · diff vs {compare.name}
+                {compare.identical ? " (identical)" : ` (${compare.changed_bytes.toLocaleString()} B)`}
+              </span>
+            )}
             <div className="spacer" />
             <span>{formats.length > 0 ? formats[0].format : "unknown format"}</span>
           </>

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import type { Fault, FieldNode, Value } from "./api";
 
 interface Props {
@@ -9,7 +9,53 @@ interface Props {
   colorFor?: (offset: number) => string | undefined;
   /** Where the parse stopped, marked in place at the end of the partial tree. */
   fault?: Fault | null;
+  /** The same schema run against the file being compared against, if any. Nodes
+   *  whose value differs then show `other -> mine`. */
+  otherRoot?: FieldNode | null;
   onSelect: (node: FieldNode, path: string) => void;
+}
+
+/** What a comparison says about each node: its counterpart, and whether it (or
+ *  anything under it) differs. */
+interface Comparison {
+  others: Map<string, FieldNode>;
+  changed: Set<string>;
+}
+
+/**
+ * Pair up two runs of the same schema, node by node.
+ *
+ * The two trees are walked in lockstep by position, which is what makes the
+ * pairing meaningful: same schema, same field order. Where the shapes diverge —
+ * a length field that changed made one side parse a different number of
+ * elements — the unpaired nodes simply get no counterpart, rather than being
+ * lined up with whatever happens to sit at the same index.
+ */
+function compareTrees(mine: FieldNode, other: FieldNode | null): Comparison {
+  const out: Comparison = { others: new Map(), changed: new Set() };
+  walkPair(mine, other, ROOT_PATH, out);
+  return out;
+}
+
+function walkPair(mine: FieldNode, other: FieldNode | null, path: string, out: Comparison): boolean {
+  if (other == null) return false;
+  out.others.set(path, other);
+
+  // A leaf differs when its decoded value does; a container differs when
+  // anything under it does. Span changes count too: a field that moved or
+  // resized is a change even if the value it decoded to happens to match.
+  let changed = mine.size !== other.size || mine.offset !== other.offset;
+  if (mine.children.length === 0 && other.children.length === 0) {
+    if (formatValue(mine.value) !== formatValue(other.value)) changed = true;
+  }
+  if (mine.children.length !== other.children.length) changed = true;
+  for (let i = 0; i < mine.children.length; i++) {
+    if (walkPair(mine.children[i], other.children[i] ?? null, childPath(path, i), out)) {
+      changed = true;
+    }
+  }
+  if (changed) out.changed.add(path);
+  return changed;
 }
 
 /**
@@ -77,8 +123,19 @@ export function findFieldAtOffset(
   return best;
 }
 
-export function StructureTree({ root, activePath, colorFor, fault, onSelect }: Props) {
+/** How many `check` fields in the tree disagree with the bytes they cover. */
+export function countBadChecks(node: FieldNode): number {
+  let n = node.check && !node.check.ok ? 1 : 0;
+  for (const child of node.children) n += countBadChecks(child);
+  return n;
+}
+
+export function StructureTree({ root, activePath, colorFor, fault, otherRoot, onSelect }: Props) {
   const faultPath = fault ? faultAnchorPath(root) : null;
+  const cmp = useMemo(
+    () => (otherRoot ? compareTrees(root, otherRoot) : null),
+    [root, otherRoot],
+  );
   return (
     <div className="tree">
       <TreeNode
@@ -89,6 +146,7 @@ export function StructureTree({ root, activePath, colorFor, fault, onSelect }: P
         colorFor={colorFor}
         fault={fault ?? null}
         faultPath={faultPath}
+        cmp={cmp}
         onSelect={onSelect}
       />
     </div>
@@ -103,10 +161,11 @@ interface NodeProps {
   colorFor?: (offset: number) => string | undefined;
   fault: Fault | null;
   faultPath: string | null;
+  cmp: Comparison | null;
   onSelect: (node: FieldNode, path: string) => void;
 }
 
-function TreeNode({ node, path, depth, activePath, colorFor, fault, faultPath, onSelect }: NodeProps) {
+function TreeNode({ node, path, depth, activePath, colorFor, fault, faultPath, cmp, onSelect }: NodeProps) {
   const [open, setOpen] = useState(depth < 2); // expand the first couple levels
   const hasChildren = node.children.length > 0;
   const isActive = activePath === path;
@@ -115,12 +174,24 @@ function TreeNode({ node, path, depth, activePath, colorFor, fault, faultPath, o
   // A fault can sit deeper than the levels that open by default, so force every
   // ancestor of it open - a marker you have to go hunting for is no marker.
   const onFaultTrail = faultPath != null && faultPath.startsWith(path + "/");
-  const expanded = open || onFaultTrail;
+  // A change in a collapsed subtree is a change you would never find, so the
+  // trail down to one opens itself - same reasoning as the fault trail.
+  const onChangeTrail =
+    cmp != null && cmp.changed.has(path) && node.children.length > 0 && depth < 6;
+  const expanded = open || onFaultTrail || onChangeTrail;
+
+  const other = cmp?.others.get(path);
+  const isChanged = cmp?.changed.has(path) ?? false;
+  // Only a leaf shows a before value; for a container the changed children do.
+  const wasValue =
+    isChanged && other != null && node.children.length === 0 && other.children.length === 0
+      ? formatValue(other.value)
+      : null;
 
   return (
     <div className="tree-node">
       <div
-        className={"tree-row" + (isActive ? " active" : "")}
+        className={"tree-row" + (isActive ? " active" : "") + (isChanged ? " changed" : "")}
         style={{ paddingLeft: 8 + depth * 14 }}
         onClick={() => onSelect(node, path)}
       >
@@ -141,7 +212,26 @@ function TreeNode({ node, path, depth, activePath, colorFor, fault, faultPath, o
             {node.description}
           </span>
         )}
+        {wasValue != null && (
+          <span className="tree-was" title="value in the compared file">
+            {wasValue} <span className="tree-arrow">→</span>
+          </span>
+        )}
         <span className="tree-value">{formatValue(node.value)}</span>
+        {node.check && (
+          <span
+            className={"tree-check" + (node.check.ok ? " ok" : " bad")}
+            title={
+              node.check.ok
+                ? `${node.check.algo} matches the ${node.check.over_size} bytes at 0x${node.check.over_offset.toString(16).toUpperCase()}`
+                : `${node.check.algo} mismatch — those ${node.check.over_size} bytes produce 0x${node.check.computed.toString(16).toUpperCase()}`
+            }
+          >
+            {node.check.ok
+              ? "✓"
+              : `✗ 0x${node.check.computed.toString(16).toUpperCase()}`}
+          </span>
+        )}
       </div>
       {hasChildren && expanded && (
         <div className="tree-children">
@@ -155,6 +245,7 @@ function TreeNode({ node, path, depth, activePath, colorFor, fault, faultPath, o
               colorFor={colorFor}
               fault={fault}
               faultPath={faultPath}
+              cmp={cmp}
               onSelect={onSelect}
             />
           ))}

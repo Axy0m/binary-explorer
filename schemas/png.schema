@@ -35,7 +35,7 @@ struct PngChunk {
         "IHDR"  => PngIhdrData
         default => bytes[length]
     }
-    crc u32 "CRC32 of chunk type + data"
+    crc u32 check crc32 over(chunkType .. data) "CRC32 of chunk type + data"
 }
 
 struct PNG {

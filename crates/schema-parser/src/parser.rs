@@ -25,9 +25,9 @@ use std::collections::HashMap;
 use crate::error::{ParseError, Span};
 use crate::lexer::{Token, TokenKind};
 use schema::{
-    BinOp, BitMember, BitfieldDef, Compare, CompareOp, CompareValue, Condition, Decode, EnumDef,
-    EnumVariant, Expr, Field, Len, MatchArm, MatchKey, Pointer, Prim, Schema, StructDef, Transform,
-    TypeExpr,
+    BinOp, BitMember, BitfieldDef, Check, CheckSpan, Checksum, Compare, CompareOp, CompareValue,
+    Condition, Decode, EnumDef, EnumVariant, Expr, Field, Len, MatchArm, MatchKey, Pointer, Prim,
+    Schema, StructDef, Transform, TypeExpr,
 };
 
 /// Type keywords that require a bracketed length (they have no natural size).
@@ -293,6 +293,7 @@ impl Parser {
                 pointer: None,
                 condition: None,
                 decode: None,
+                check: None,
                 desc: self.parse_optional_desc(),
                 line,
             });
@@ -320,6 +321,14 @@ impl Parser {
         } else {
             None
         };
+        // An optional `check <algo> over(...)` validates the field against a
+        // checksum of other bytes.
+        let check = if matches!(self.peek(), Some(t) if t.kind == TokenKind::Check) {
+            self.advance();
+            Some(self.parse_check()?)
+        } else {
+            None
+        };
         // An optional `if <condition>` makes the field conditional.
         let condition = if matches!(self.peek(), Some(t) if t.kind == TokenKind::If) {
             self.advance();
@@ -333,9 +342,43 @@ impl Parser {
             pointer,
             condition,
             decode,
+            check,
             desc: self.parse_optional_desc(),
             line,
         })
+    }
+
+    /// Parse a `check` clause (the `check` keyword already consumed):
+    /// `<algo> over(<field>)` or `<algo> over(<first> .. <last>)`.
+    fn parse_check(&mut self) -> Result<Check, ParseError> {
+        let (name, span) = self.expect_ident("a checksum name")?;
+        let algo = Checksum::from_name(&name).ok_or(ParseError::UnknownChecksum {
+            name: name.clone(),
+            span,
+        })?;
+
+        // `over` is required, and is matched as a plain identifier rather than a
+        // keyword: reserving it would break any schema with a field named `over`.
+        let over_ok = matches!(self.peek(), Some(t) if matches!(&t.kind, TokenKind::Ident(w) if w == "over"));
+        if !over_ok {
+            return Err(ParseError::ExpectedOver {
+                algo: name,
+                span: self.peek().map(|t| t.span).unwrap_or(span),
+            });
+        }
+        self.advance();
+        self.expect(&TokenKind::LParen, "`(`")?;
+
+        let (first, _) = self.expect_ident("a field name to checksum over")?;
+        let span = if matches!(self.peek(), Some(t) if t.kind == TokenKind::DotDot) {
+            self.advance();
+            let (last, _) = self.expect_ident("the last field of the checksummed range")?;
+            CheckSpan::Range(first, last)
+        } else {
+            CheckSpan::Field(first)
+        };
+        self.expect(&TokenKind::RParen, "`)`")?;
+        Ok(Check { algo, span })
     }
 
     /// Parse a `decode` clause (the `decode` keyword already consumed):

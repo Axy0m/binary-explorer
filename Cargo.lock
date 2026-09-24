@@ -108,6 +108,7 @@ dependencies = [
  "analysis",
  "base64 0.22.1",
  "binary-reader",
+ "diff",
  "file-editing",
  "format-detection",
  "plugin-host",
@@ -605,6 +606,13 @@ dependencies = [
  "quote",
  "rustc_version",
  "syn 2.0.119",
+]
+
+[[package]]
+name = "diff"
+version = "0.2.0"
+dependencies = [
+ "serde",
 ]
 
 [[package]]
