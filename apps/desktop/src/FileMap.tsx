@@ -1,4 +1,4 @@
-import type { FieldNode } from "./api";
+import type { Coverage, FieldNode } from "./api";
 import { ROOT_PATH } from "./StructureTree";
 
 interface Props {
@@ -10,6 +10,9 @@ interface Props {
   selected: number | null;
   /** Path of the active field, so the matching segment can be highlighted. */
   activePath: string | null;
+  /** What the parse explained. Its gaps are drawn on the track, which is the
+   *  "what have I not worked out yet" view. */
+  coverage?: Coverage | null;
   /** Select a field (click a segment). */
   onSelect: (node: FieldNode, path: string) => void;
   /** Jump to a byte offset (click an empty part of the track). */
@@ -37,10 +40,29 @@ function fmtOffset(n: number): string {
  * gaps are unparsed regions; a marker tracks the current selection. This is
  * the "visualize the file once you understand its structure" view.
  */
-export function FileMap({ fileLen, root, selected, activePath, onSelect, onSeek }: Props) {
+/** Gaps are capped before rendering: a schema that explains almost nothing of a
+ *  large file can report thousands, and the small ones are sub-pixel anyway. */
+const MAX_DRAWN_GAPS = 300;
+
+export function FileMap({ fileLen, root, selected, activePath, coverage, onSelect, onSeek }: Props) {
   const segments = (root?.children ?? [])
     .map((node, i) => ({ node, path: `${ROOT_PATH}/${i}` }))
     .filter(({ node }) => node.size > 0);
+
+  const gaps = coverage?.gaps ?? [];
+  const drawnGaps =
+    gaps.length <= MAX_DRAWN_GAPS
+      ? gaps
+      : [...gaps].sort((a, b) => b.len - a.len).slice(0, MAX_DRAWN_GAPS);
+  const explained = coverage && coverage.total > 0 ? coverage.covered / coverage.total : null;
+
+  /** The first unexplained byte after the cursor, wrapping to the first gap. */
+  function nextGap() {
+    if (gaps.length === 0) return;
+    const from = selected ?? -1;
+    const next = gaps.find((g) => g.offset > from) ?? gaps[0];
+    onSeek(next.offset);
+  }
 
   // Click on the bare track jumps to the proportional offset.
   function onTrackClick(e: React.MouseEvent<HTMLDivElement>) {
@@ -54,6 +76,14 @@ export function FileMap({ fileLen, root, selected, activePath, onSelect, onSeek 
   return (
     <div className="filemap">
       <div className="filemap-track" onClick={onTrackClick}>
+        {drawnGaps.map((g) => (
+          <div
+            key={`gap-${g.offset}`}
+            className="filemap-gap"
+            style={{ left: pct(g.offset), width: pct(g.len) }}
+            title={`unexplained — ${fmtSize(g.len)} at ${fmtOffset(g.offset)}`}
+          />
+        ))}
         {segments.map(({ node, path }, i) => {
           // Highlight the segment when it (or a field nested inside it) is the
           // current selection.
@@ -79,6 +109,24 @@ export function FileMap({ fileLen, root, selected, activePath, onSelect, onSeek 
       <div className="filemap-axis">
         <span>0</span>
         {segments.length === 0 && <span className="filemap-hint">parse a schema to map the file</span>}
+        {explained != null && segments.length > 0 && (
+          <span className="filemap-cov">
+            <b>{Math.round(explained * 100)}%</b> explained
+            {gaps.length > 0 && (
+              <>
+                {" · "}
+                <button
+                  className="filemap-gap-btn"
+                  onClick={(e) => { e.stopPropagation(); nextGap(); }}
+                  title="Jump to the next run of bytes no field accounts for"
+                >
+                  {gaps.length}
+                  {coverage?.truncated ? "+" : ""} gap{gaps.length === 1 ? "" : "s"} ›
+                </button>
+              </>
+            )}
+          </span>
+        )}
         <span>{fmtSize(fileLen)}</span>
       </div>
     </div>

@@ -79,6 +79,11 @@ GzModule
 - Checksums — `check crc32 over(chunkType .. data)` validates a field against the
   bytes it covers (`crc32`, `adler32`, `sum8/16/32`, `xor8`)
 
+**Knowing what you don't know yet**
+- Every parse reports how much of the file it actually explained, and the file
+  map shades the runs no field accounts for — jump to the next one and drag it
+  into a field
+
 **Editing & analysis**
 - Edit bytes or typed field values in place, with undo/redo, then save
 - Recompute stale checksums in one click, so an edited file still opens

@@ -28,8 +28,10 @@ use schema::{
 use serde::{Deserialize, Serialize};
 
 pub mod checksum;
+pub mod coverage;
 
 pub use binary_reader::Endian;
+pub use coverage::Coverage;
 
 /// Guards against a schema whose structs reference each other cyclically. Real
 /// formats nest only a handful of levels; this keeps a bad schema from
@@ -60,6 +62,13 @@ pub struct FieldNode {
     /// Verdict of a `check` clause on this field, if it had one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub check: Option<CheckResult>,
+    /// True when this node's children were parsed out of a `decode`d buffer.
+    ///
+    /// The node itself keeps its span in the file (the encoded bytes), but the
+    /// children's offsets index the decoded buffer instead, so anything mapping
+    /// nodes back onto file positions has to stop here rather than descend.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub decoded: bool,
     pub children: Vec<FieldNode>,
 }
 
@@ -266,6 +275,9 @@ pub struct ParseOutcome {
     pub tree: FieldNode,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fault: Option<Fault>,
+    /// How much of the file the schema actually accounted for, and where the
+    /// holes are. Computed here so the app and the CLI agree on the answer.
+    pub coverage: Coverage,
 }
 
 /// What kind of wall the parse hit.
@@ -368,9 +380,11 @@ pub fn parse_partial(
     endian: Endian,
 ) -> Result<ParseOutcome> {
     let (tree, fault) = run(schema, reader, entry, endian)?;
+    let coverage = coverage::coverage(&tree, reader.len());
     Ok(ParseOutcome {
         tree,
         fault: fault.map(|(_, f)| f),
+        coverage,
     })
 }
 
@@ -643,6 +657,7 @@ impl Runtime<'_> {
             size: cursor - offset,
             description: String::new(),
             check: None,
+            decoded: false,
             children,
         })
     }
@@ -686,6 +701,7 @@ impl Runtime<'_> {
                 };
                 let parsed = rt.parse_type(&node.name, as_type, 0, &[], depth + 1);
                 node.type_name = format!("decode {tname} as {}", type_display(as_type));
+                node.decoded = true;
                 match parsed {
                     Ok(p) => {
                         node.value = p.value;
@@ -823,6 +839,7 @@ impl Runtime<'_> {
                     size: cursor - offset,
                     description: String::new(),
                     check: None,
+                    decoded: false,
                     children,
                 })
             }
@@ -932,6 +949,7 @@ impl Runtime<'_> {
                     size: cursor - offset,
                     description: String::new(),
                     check: None,
+                    decoded: false,
                     children,
                 })
             }
@@ -1166,6 +1184,7 @@ impl Runtime<'_> {
             size,
             description: String::new(),
             check: None,
+            decoded: false,
             children,
         })
     }
@@ -1323,6 +1342,7 @@ fn scalar(name: &str, type_name: String, value: Value, offset: usize, size: usiz
         size,
         description: String::new(),
         check: None,
+        decoded: false,
         children: Vec::new(),
     }
 }

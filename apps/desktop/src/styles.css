@@ -318,6 +318,23 @@ button.ghost.on { border-color: var(--pink); color: var(--pink); }
 .filemap-seg:hover { opacity: 1; filter: brightness(1.08); }
 .filemap-seg.active { opacity: 1; box-shadow: inset 0 0 0 2px var(--text), inset 0 0 0 3px rgba(0, 0, 0, 0.4); z-index: 2; }
 .filemap-seg-label { font-family: var(--mono); font-size: 10px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* Bytes no field accounts for. Drawn under the segments and deliberately
+   quiet — it is the absence of a colour that should read as "unexplained". */
+.filemap-gap {
+  position: absolute; top: 0; bottom: 0; z-index: 0;
+  background: repeating-linear-gradient(
+    -45deg, transparent, transparent 3px,
+    color-mix(in srgb, var(--muted-2) 45%, transparent) 3px,
+    color-mix(in srgb, var(--muted-2) 45%, transparent) 6px
+  );
+}
+.filemap-cov { font-family: var(--mono); font-size: 9.5px; color: var(--muted); }
+.filemap-cov b { color: var(--text-dim); font-weight: 600; }
+.filemap-gap-btn {
+  background: none; border: none; padding: 0; cursor: pointer;
+  font-family: var(--mono); font-size: 9.5px; color: var(--muted);
+}
+.filemap-gap-btn:hover { color: var(--accent); }
 .filemap-marker { position: absolute; top: -1px; bottom: -1px; width: 2px; background: var(--accent); box-shadow: 0 0 4px var(--accent); pointer-events: none; z-index: 3; }
 .filemap-axis { display: flex; justify-content: space-between; font-family: var(--mono); font-size: 9.5px; color: var(--muted-2); }
 .filemap-hint { font-style: italic; }

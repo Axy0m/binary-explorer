@@ -33,6 +33,7 @@ import {
   compareParse,
   fixChecksums,
   type CompareStatus,
+  type Coverage,
   type SchemaEntry,
   type SearchKind,
   type BuiltinSchema,
@@ -108,6 +109,8 @@ export function App() {
   const [schemaError, setSchemaError] = useState<string | null>(null);
   /** Where a partial parse stopped. The tree is still shown alongside it. */
   const [fault, setFault] = useState<Fault | null>(null);
+  /** What the schema accounted for, and which bytes it left unexplained. */
+  const [coverage, setCoverage] = useState<Coverage | null>(null);
   const [activePath, setActivePath] = useState<string | null>(null);
   const [highlight, setHighlight] = useState<Range | null>(null);
   const [selectedNode, setSelectedNode] = useState<FieldNode | null>(null);
@@ -271,6 +274,7 @@ export function App() {
       setInterp(null);
       setTree(null);
       setFault(null);
+      setCoverage(null);
       setActivePath(null);
       setHighlight(null);
       setSelectedNode(null);
@@ -463,10 +467,12 @@ export function App() {
       const out = await parseSchema(text, ent, end);
       setTree(out.tree);
       setFault(out.fault ?? null);
+      setCoverage(out.coverage ?? null);
       setSchemaError(null);
     } catch (e) {
       setTree(null);
       setFault(null);
+      setCoverage(null);
       setActivePath(null);
       setHighlight(null);
       setSelectedNode(null);
@@ -691,6 +697,7 @@ export function App() {
         const out = await parseSchema(schemaText, entry, endian);
         setTree(out.tree);
         setFault(out.fault ?? null);
+        setCoverage(out.coverage ?? null);
       } catch {
         /* keep the previous tree if a re-parse fails */
       }
@@ -949,6 +956,7 @@ export function App() {
           root={tree}
           selected={selected}
           activePath={activePath}
+          coverage={coverage}
           onSelect={selectField}
           onSeek={selectByte}
         />

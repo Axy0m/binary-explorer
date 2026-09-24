@@ -93,6 +93,9 @@ export interface FieldNode {
   description: string;
   /** Present only on fields carrying a `check` clause. */
   check?: CheckResult;
+  /** True when this node's children were parsed out of decoded bytes, so their
+   *  offsets index that buffer rather than the file. */
+  decoded?: boolean;
   children: FieldNode[];
 }
 
@@ -115,11 +118,30 @@ export interface Fault {
   decoded: boolean;
 }
 
+/** A byte range. Mirrors `schema_runtime::coverage::Span`. */
+export interface CoverageSpan {
+  offset: number;
+  len: number;
+}
+
+/** How much of the file a parse accounted for. Mirrors `schema_runtime::Coverage`.
+ *  Only fields that read bytes themselves count, so a hole between two fields
+ *  shows up rather than being hidden by the struct that spans it. */
+export interface Coverage {
+  total: number;
+  covered: number;
+  /** Runs of bytes no field claims, ascending. */
+  gaps: CoverageSpan[];
+  /** True when the gap list hit its cap; `covered` is still exact. */
+  truncated: boolean;
+}
+
 /** A parse result: whatever decoded, plus the fault that stopped it (if any).
  *  Mirrors `schema_runtime::ParseOutcome`. */
 export interface ParseOutcome {
   tree: FieldNode;
   fault?: Fault;
+  coverage: Coverage;
 }
 
 /** A detected file format. Mirrors the backend `DetectionOut`. */

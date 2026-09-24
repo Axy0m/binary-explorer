@@ -181,6 +181,23 @@ fn parse_cmd(args: &[String]) -> Result<(), Fail> {
             );
         } else {
             print!("{}", render::tree(&outcome.tree));
+            // What the schema did not explain is the useful half of the answer
+            // while a format is still being worked out.
+            let c = &outcome.coverage;
+            if c.gaps.is_empty() {
+                println!("
+{} of {} bytes explained (all of it)", c.covered, c.total);
+            } else {
+                println!(
+                    "
+{} of {} bytes explained ({:.0}%) — {} unexplained region(s), first at {:#x}",
+                    c.covered,
+                    c.total,
+                    c.fraction() * 100.0,
+                    c.gaps.len(),
+                    c.gaps[0].offset,
+                );
+            }
         }
     }
 
