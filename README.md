@@ -72,6 +72,8 @@ GzModule
 - Inline transforms — `bytes[n] decode <t> [as <Type>]` for
   `xor` / `rolling_xor` / `add` / `base64` / `zlib` / `inflate` / `gunzip`
 - Variable-length integers — `varint` / `svarint` (LEB128)
+- Per-field byte order — `u32be` / `f64le` override the schema default, for the
+  formats that mix the two
 - Checksums — `check crc32 over(chunkType .. data)` validates a field against the
   bytes it covers (`crc32`, `adler32`, `sum8/16/32`, `xor8`)
 

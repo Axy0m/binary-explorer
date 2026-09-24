@@ -30,6 +30,22 @@ use schema::{
     Schema, StructDef, Transform, TypeExpr,
 };
 
+/// Split a `be`/`le` suffix off a primitive keyword: `u32be`, `f64le`.
+///
+/// Single-byte primitives are deliberately excluded. `u8be` has no meaning, and
+/// silently accepting it would hide a typo; it falls through to the ordinary
+/// "unknown type" error instead. A struct name that happens to end in `le`
+/// (`Simple`) is unaffected, since its stem is not a primitive keyword.
+fn prim_with_endian(word: &str) -> Option<(Prim, bool)> {
+    let (stem, big) = match (word.strip_suffix("be"), word.strip_suffix("le")) {
+        (Some(stem), _) => (stem, true),
+        (None, Some(stem)) => (stem, false),
+        (None, None) => return None,
+    };
+    let prim = Prim::from_keyword(stem)?;
+    (prim.size() > 1).then_some((prim, big))
+}
+
 /// Type keywords that require a bracketed length (they have no natural size).
 const SIZED_KEYWORDS: [&str; 2] = ["string", "bytes"];
 
@@ -752,6 +768,11 @@ impl Parser {
         // struct/enum/bitfield reference.
         let element = if let Some(prim) = Prim::from_keyword(&base) {
             TypeExpr::Prim(prim)
+        } else if let Some((prim, big)) = prim_with_endian(&base) {
+            TypeExpr::Endian {
+                big,
+                inner: Box::new(TypeExpr::Prim(prim)),
+            }
         } else if base == "varint" {
             TypeExpr::Varint { signed: false }
         } else if base == "svarint" {

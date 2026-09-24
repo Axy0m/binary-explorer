@@ -1216,3 +1216,65 @@ fn check_of_an_empty_span_is_the_algorithms_empty_value() {
     assert!(c.ok, "the canonical IEND CRC should validate: {c:?}");
     assert_eq!(c.over_size, 4);
 }
+
+// --- per-type endianness ----------------------------------------------------
+
+#[test]
+fn a_be_field_reads_big_endian_inside_a_little_endian_struct() {
+    // The mixed-endian case this exists for: a little-endian record carrying one
+    // big-endian timestamp.
+    let src = "struct S { version u16  savedAt u32be  playtime u32 }";
+    let mut bytes = 3u16.to_le_bytes().to_vec();
+    bytes.extend_from_slice(&0x6655_4433u32.to_be_bytes());
+    bytes.extend_from_slice(&3600u32.to_le_bytes());
+    let root = run(src, "S", bytes, Endian::Little);
+    assert_eq!(child(&root, "version").value, Value::U(3));
+    assert_eq!(child(&root, "savedAt").value, Value::U(0x6655_4433));
+    // The override must not leak into the field after it.
+    assert_eq!(child(&root, "playtime").value, Value::U(3600));
+    assert_eq!(child(&root, "savedAt").type_name, "u32be");
+}
+
+#[test]
+fn an_le_field_reads_little_endian_inside_a_big_endian_struct() {
+    let src = "struct S { a u32  b u32le  c u32 }";
+    let mut bytes = 1u32.to_be_bytes().to_vec();
+    bytes.extend_from_slice(&2u32.to_le_bytes());
+    bytes.extend_from_slice(&3u32.to_be_bytes());
+    let root = run(src, "S", bytes, Endian::Big);
+    assert_eq!(child(&root, "a").value, Value::U(1));
+    assert_eq!(child(&root, "b").value, Value::U(2));
+    assert_eq!(child(&root, "c").value, Value::U(3));
+}
+
+#[test]
+fn every_element_of_an_override_array_uses_the_override() {
+    let src = "struct S { xs u16be[3] }";
+    let mut bytes = Vec::new();
+    for v in [1u16, 256, 4096] {
+        bytes.extend_from_slice(&v.to_be_bytes());
+    }
+    let root = run(src, "S", bytes, Endian::Little);
+    let xs = child(&root, "xs");
+    let got: Vec<_> = xs.children.iter().map(|c| c.value.clone()).collect();
+    assert_eq!(got, vec![Value::U(1), Value::U(256), Value::U(4096)]);
+}
+
+#[test]
+fn an_overridden_field_can_drive_a_length() {
+    // A big-endian count in a little-endian file still resolves as a length.
+    let src = "struct S { n u16be  xs u8[n] }";
+    let mut bytes = 3u16.to_be_bytes().to_vec();
+    bytes.extend_from_slice(&[7, 8, 9]);
+    let root = run(src, "S", bytes, Endian::Little);
+    assert_eq!(child(&root, "xs").children.len(), 3);
+}
+
+#[test]
+fn an_override_does_not_leak_past_a_fault() {
+    // The struct runs out of bytes inside the overridden field; the override
+    // must still be unwound so the fault is reported normally.
+    let src = "struct S { a u32be }";
+    let out = run_partial(src, "S", vec![0, 1], Endian::Little);
+    assert!(out.fault.is_some(), "a short read should fault");
+}

@@ -721,6 +721,19 @@ impl Runtime<'_> {
                 let value = self.read_prim(*p, offset)?;
                 Ok(scalar(name, prim_name(*p), value, offset, p.size()))
             }
+            TypeExpr::Endian { big, inner } => {
+                // Swap the byte order for this subtree only, then put it back.
+                // Restored before `?` so a fault inside cannot leak the override
+                // into the fields that follow.
+                let prev = self.endian;
+                self.endian = if *big { Endian::Big } else { Endian::Little };
+                let result = self.parse_type(name, inner, offset, siblings, depth);
+                self.endian = prev;
+                let mut node = result?;
+                // Report what the schema wrote (`u32be`), not the inner type.
+                node.type_name = type_display(ty);
+                Ok(node)
+            }
             TypeExpr::Varint { signed } => {
                 let (value, size) = self.read_varint(*signed, offset)?;
                 let tname = if *signed { "svarint" } else { "varint" };
@@ -1328,6 +1341,9 @@ fn type_display(ty: &TypeExpr) -> String {
         TypeExpr::Match { discriminant, .. } => format!("match {}", discriminant.join(".")),
         TypeExpr::Repeat { elem, .. } => format!("repeat {}", type_display(elem)),
         TypeExpr::Computed(_) => "computed".to_string(),
+        TypeExpr::Endian { big, inner } => {
+            format!("{}{}", type_display(inner), if *big { "be" } else { "le" })
+        }
     }
 }
 

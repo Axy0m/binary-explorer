@@ -368,6 +368,14 @@ pub enum TypeExpr {
     /// A computed field: its value is an expression over earlier fields, and it
     /// reads no bytes from the file (`total = size - header`).
     Computed(Box<Expr>),
+    /// A subtree read with an explicit byte order, written as a suffix on a
+    /// primitive: `u32be`, `f64le`.
+    ///
+    /// Real formats are not always consistent about byte order — a
+    /// little-endian save file with one big-endian timestamp in its header is
+    /// ordinary — and without this the only way to read such a file was to
+    /// parse it twice with different settings.
+    Endian { big: bool, inner: Box<TypeExpr> },
 }
 
 /// An integer arithmetic expression over field values (for computed fields).

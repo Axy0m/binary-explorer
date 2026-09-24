@@ -565,6 +565,56 @@ fn repeat_without_until_parses() {
     }
 }
 
+// --- per-type endianness ----------------------------------------------------
+
+#[test]
+fn a_be_suffix_wraps_the_primitive() {
+    let schema = parse("struct S { savedAt u32be }").expect("should parse");
+    match &schema.structs[0].fields[0].ty {
+        TypeExpr::Endian { big, inner } => {
+            assert!(big);
+            assert_eq!(**inner, TypeExpr::Prim(schema::Prim::U32));
+        }
+        other => panic!("expected an endian override, got {other:?}"),
+    }
+}
+
+#[test]
+fn an_le_suffix_wraps_the_primitive() {
+    let schema = parse("struct S { x f64le }").expect("should parse");
+    match &schema.structs[0].fields[0].ty {
+        TypeExpr::Endian { big, inner } => {
+            assert!(!big);
+            assert_eq!(**inner, TypeExpr::Prim(schema::Prim::F64));
+        }
+        other => panic!("expected an endian override, got {other:?}"),
+    }
+}
+
+#[test]
+fn an_endian_override_works_as_an_array_element() {
+    let schema = parse("struct S { xs u16be[4] }").expect("should parse");
+    match &schema.structs[0].fields[0].ty {
+        TypeExpr::Array { elem, .. } => assert!(matches!(**elem, TypeExpr::Endian { big: true, .. })),
+        other => panic!("expected an array, got {other:?}"),
+    }
+}
+
+#[test]
+fn single_byte_types_have_no_byte_order_to_override() {
+    // `u8be` is meaningless; it must not silently parse as a plain u8.
+    let schema = parse("struct S { x u8be }").expect("parses as a type reference");
+    assert_eq!(schema.structs[0].fields[0].ty, TypeExpr::Named("u8be".into()));
+}
+
+#[test]
+fn a_type_name_ending_in_le_is_not_an_override() {
+    // `Simple` ends in "le" but its stem is not a primitive, so it stays a
+    // struct reference.
+    let schema = parse("struct Simple { a u8 }  struct S { x Simple }").expect("should parse");
+    assert_eq!(schema.structs[1].fields[0].ty, TypeExpr::Named("Simple".into()));
+}
+
 // --- check / checksums ------------------------------------------------------
 
 #[test]
