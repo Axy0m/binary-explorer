@@ -168,7 +168,7 @@ changed, but *which field* they were.
 Headless, for scripts:
 
 ```sh
-cargo run -p diff --example diff -- save_before.sav save_after.sav
+nybble diff save_before.sav save_after.sav
 ```
 
 ---
@@ -190,6 +190,35 @@ struct PngChunk {
 Nybble then validates it on every parse — a green tick when the file is intact,
 and when it is not, the value it *should* hold. Edit a field, and one click
 rewrites every stale checksum, so the file still opens in the tool that made it.
+
+---
+
+## On the command line
+
+The app is for exploring one file. `nybble` is for the other half of the job:
+running a finished schema over a hundred of them, diffing two captures in a
+script, or asserting in CI that a format still parses.
+
+```sh
+nybble parse schemas/png.schema shot.png          # the field tree
+nybble parse schemas/png.schema shot.png --json   # pipe it into jq
+nybble diff before.sav after.sav                  # what changed
+nybble detect firmware.bin                        # what is this?
+nybble check my.schema                            # does my schema compile?
+```
+
+A schema carries its own entry point and byte order in its `// @` header, so the
+common case needs no flags. The exit status is what scripts want: **0** matched,
+**1** did not (a parse fault, a failed checksum, a difference), **2** a usage
+error. So this is a valid CI check:
+
+```sh
+nybble parse formats/firmware.schema build/out.bin --quiet || exit 1
+```
+
+```sh
+cargo run -p nybble-cli -- parse <schema> <file>   # without installing
+```
 
 ---
 
@@ -253,6 +282,7 @@ Run the engine headless (no UI) against any file:
 
 ```sh
 cargo test                                   # full workspace test suite
+cargo run -p nybble-cli -- parse <schema> <file>   # the CLI, without installing
 cargo run -p schema-runtime --example dump -- <schema> <file> [entry] [le|be]
 cargo run -p schema-parser  --example check -- <schema>   # validate a schema
 ```
@@ -272,6 +302,7 @@ crates/
   analysis/          entropy, strings, timestamps
   search/            byte/string search
   diff/              aligned byte comparison of two files
+  cli/               the `nybble` command-line binary
   file-editing/      in-place edits with undo/redo
   schema-library/    saved-schema storage
   plugin-host/       format-pack plugins

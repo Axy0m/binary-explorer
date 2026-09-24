@@ -1980,6 +1980,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "nybble-cli"
+version = "0.2.0"
+dependencies = [
+ "binary-reader",
+ "diff",
+ "format-detection",
+ "schema-library",
+ "schema-parser",
+ "schema-runtime",
+ "serde_json",
+]
+
+[[package]]
 name = "objc2"
 version = "0.6.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"

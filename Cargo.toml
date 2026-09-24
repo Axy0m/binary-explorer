@@ -11,6 +11,7 @@ members = [
     "crates/analysis",
     "crates/search",
     "crates/diff",
+    "crates/cli",
     "crates/file-editing",
     "crates/schema-library",
     "crates/plugin-host",

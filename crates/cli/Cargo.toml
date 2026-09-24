@@ -1,0 +1,20 @@
+[package]
+name = "nybble-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Nybble on the command line: run a schema over a file, diff two files, detect formats."
+
+[[bin]]
+name = "nybble"
+path = "src/main.rs"
+
+[dependencies]
+binary-reader = { workspace = true }
+schema-parser = { path = "../schema-parser" }
+schema-runtime = { path = "../schema-runtime" }
+schema-library = { path = "../schema-library" }
+format-detection = { path = "../format-detection" }
+diff = { path = "../diff" }
+serde_json = { workspace = true }
