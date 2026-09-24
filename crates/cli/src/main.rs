@@ -10,6 +10,7 @@
 //! nybble parse schemas/png.schema shot.png --json # pipe it into jq
 //! nybble diff before.sav after.sav                # changed regions
 //! nybble detect firmware.bin                      # what is this?
+//! nybble hints firmware.bin --at 0x4000           # what shape are these bytes?
 //! nybble check my.schema                          # does the schema compile?
 //! ```
 
@@ -27,6 +28,7 @@ USAGE:
     nybble parse <schema> <file> [options]   run a schema over a file
     nybble diff <a> <b> [options]            compare two files, byte-aligned
     nybble detect <file>                     identify a format from its magic bytes
+    nybble hints <file> [options]            guess the shape of a region of bytes
     nybble check <schema>                    validate that a schema compiles
 
 PARSE OPTIONS:
@@ -38,6 +40,11 @@ PARSE OPTIONS:
 DIFF OPTIONS:
     --limit <n>      how many changed regions to list (default 20)
     --json           emit the summary and regions as JSON
+
+HINTS OPTIONS:
+    --at <offset>    where to start looking (decimal or 0x…; default 0)
+    --len <n>        how many bytes to look at (default: to the end)
+    --json           emit the hints as JSON
 
 Exit status is 0 on success, 1 when a file does not match (a parse fault, a
 difference, a schema that does not compile), and 2 for a usage error.";
@@ -54,6 +61,7 @@ fn main() -> ExitCode {
         "parse" => parse_cmd(rest),
         "diff" => diff_cmd(rest),
         "detect" => detect_cmd(rest),
+        "hints" => hints_cmd(rest),
         "check" => check_cmd(rest),
         "-h" | "--help" | "help" => {
             println!("{USAGE}");
@@ -96,6 +104,8 @@ struct Args {
     entry: Option<String>,
     endian: Option<String>,
     limit: Option<usize>,
+    at: Option<u64>,
+    len: Option<u64>,
 }
 
 fn parse_args(args: &[String]) -> Result<Args, Fail> {
@@ -106,6 +116,8 @@ fn parse_args(args: &[String]) -> Result<Args, Fail> {
         entry: None,
         endian: None,
         limit: None,
+        at: None,
+        len: None,
     };
     let mut it = args.iter();
     while let Some(arg) = it.next() {
@@ -128,6 +140,8 @@ fn parse_args(args: &[String]) -> Result<Args, Fail> {
                         .map_err(|_| Fail::Usage(format!("--limit wants a number, got `{raw}`")))?,
                 );
             }
+            "--at" => out.at = Some(number(&value("--at")?, "--at")?),
+            "--len" => out.len = Some(number(&value("--len")?, "--len")?),
             other if other.starts_with('-') && other != "-" => {
                 return Err(Fail::Usage(format!("unknown option `{other}`")));
             }
@@ -135,6 +149,16 @@ fn parse_args(args: &[String]) -> Result<Args, Fail> {
         }
     }
     Ok(out)
+}
+
+/// Accept an offset the way a person writes one: `4096` or `0x1000`.
+fn number(raw: &str, flag: &str) -> Result<u64, Fail> {
+    let text = raw.trim();
+    let parsed = match text.strip_prefix("0x").or_else(|| text.strip_prefix("0X")) {
+        Some(hex) => u64::from_str_radix(hex, 16),
+        None => text.parse(),
+    };
+    parsed.map_err(|_| Fail::Usage(format!("{flag} wants a number, got `{raw}`")))
 }
 
 fn read_file(path: &str) -> Result<Vec<u8>, Fail> {
@@ -336,6 +360,43 @@ fn detect_cmd(args: &[String]) -> Result<(), Fail> {
         }
     }
     if hits.is_empty() {
+        Err(Fail::Mismatch)
+    } else {
+        Ok(())
+    }
+}
+
+// --- hints ------------------------------------------------------------------
+
+fn hints_cmd(args: &[String]) -> Result<(), Fail> {
+    let args = parse_args(args)?;
+    let [path] = args.positional.as_slice() else {
+        return Err(Fail::Usage("hints takes one file".into()));
+    };
+    let bytes = read_file(path)?;
+    let total = bytes.len() as u64;
+    let at = args.at.unwrap_or(0).min(total);
+    let end = args
+        .len
+        .map(|n| (at + n).min(total))
+        .unwrap_or(total);
+    let region = &bytes[at as usize..end as usize];
+    let hints = analysis::infer(region, at, total);
+
+    if args.json {
+        println!(
+            "{}",
+            serde_json::to_string(&hints).map_err(|e| Fail::Error(e.to_string()))?
+        );
+    } else if !args.quiet {
+        if hints.is_empty() {
+            println!("no shape found in {} byte(s) at {at:#x}", region.len());
+        }
+        for hint in &hints {
+            println!("{:#010x} +{:<8} {:<12} {}", hint.offset, hint.len, hint.label, hint.detail);
+        }
+    }
+    if hints.is_empty() {
         Err(Fail::Mismatch)
     } else {
         Ok(())

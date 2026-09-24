@@ -185,6 +185,31 @@ export function analyzeAt(offset: number): Promise<Guess[]> {
   return invoke<Guess[]>("analyze_at", { offset });
 }
 
+/** An observation about the shape of a region. Mirrors `analysis::Hint`. */
+export interface Hint {
+  /** Short kind, e.g. "records", "offset table". */
+  label: string;
+  /** What was measured, in words — the evidence, not just the verdict. */
+  detail: string;
+  offset: number;
+  len: number;
+}
+
+/** What the shape scan examined and found. Mirrors Rust `StructureHints`. */
+export interface StructureHints {
+  offset: number;
+  len: number;
+  /** True when the requested region was larger than the scan cap. */
+  clamped: boolean;
+  hints: Hint[];
+}
+
+/** Guess the shape of a region: repeating records, an offset table, a string
+ *  pool, padding. Runs locally over the open file's bytes. */
+export function inferStructure(offset: number, length: number): Promise<StructureHints> {
+  return invoke<StructureHints>("infer_structure", { offset, length });
+}
+
 /** Byte entropy across the whole file, as `buckets` values in [0,1]. */
 export function entropy(buckets: number): Promise<number[]> {
   return invoke<number[]>("entropy", { buckets });

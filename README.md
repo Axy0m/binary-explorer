@@ -83,6 +83,10 @@ GzModule
 - Every parse reports how much of the file it actually explained, and the file
   map shades the runs no field accounts for — jump to the next one and drag it
   into a field
+- Shape hints for a region you don't understand yet: repeating records and their
+  stride, tables of offsets, string pools, padding. Each one states what it
+  measured, so it reads as a lead rather than a verdict — and it is local
+  arithmetic over the bytes, so nothing leaves your machine
 
 **Editing & analysis**
 - Edit bytes or typed field values in place, with undo/redo, then save
@@ -209,6 +213,7 @@ nybble parse schemas/png.schema shot.png          # the field tree
 nybble parse schemas/png.schema shot.png --json   # pipe it into jq
 nybble diff before.sav after.sav                  # what changed
 nybble detect firmware.bin                        # what is this?
+nybble hints firmware.bin --at 0x4000             # what shape are these bytes?
 nybble check my.schema                            # does my schema compile?
 ```
 

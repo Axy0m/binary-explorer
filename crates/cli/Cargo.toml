@@ -16,5 +16,6 @@ schema-parser = { path = "../schema-parser" }
 schema-runtime = { path = "../schema-runtime" }
 schema-library = { path = "../schema-library" }
 format-detection = { path = "../format-detection" }
+analysis = { path = "../analysis" }
 diff = { path = "../diff" }
 serde_json = { workspace = true }

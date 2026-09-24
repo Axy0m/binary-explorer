@@ -340,6 +340,25 @@ button.ghost.on { border-color: var(--pink); color: var(--pink); }
 .filemap-hint { font-style: italic; }
 
 /* Strings */
+/* Shape hints — what a region looks like before you know what it is. Each one
+   states the evidence it measured, so it reads as a lead, not a verdict. */
+.hints { margin-bottom: 10px; }
+.hints-head {
+  display: flex; align-items: baseline; gap: 8px;
+  font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em;
+  color: var(--muted); margin-bottom: 5px;
+}
+.hints-region { font-family: var(--mono); font-size: 9.5px; color: var(--muted-2); text-transform: none; letter-spacing: 0; margin-left: auto; }
+.hint {
+  display: flex; flex-direction: column; gap: 2px; width: 100%;
+  text-align: left; padding: 5px 8px; margin-bottom: 4px; cursor: pointer;
+  background: color-mix(in srgb, var(--purple) 9%, transparent);
+  border: none; border-left: 2px solid var(--purple); border-radius: 0 5px 5px 0;
+}
+.hint:hover { background: color-mix(in srgb, var(--purple) 16%, transparent); }
+.hint-label { color: var(--purple); font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; }
+.hint-detail { color: var(--text-dim); font-size: 11px; line-height: 1.35; }
+
 .strings-list { font-family: var(--mono); font-size: 12px; }
 .string-hit { display: flex; gap: 10px; padding: 2px 4px; border-radius: 4px; cursor: pointer; white-space: nowrap; overflow: hidden; }
 .string-hit:hover { background: var(--panel-2); }

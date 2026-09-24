@@ -6,6 +6,8 @@
 //!   names, paths, and tags usually jump straight out of a binary this way.
 //! * [`analyze_at`] answers "what could the bytes here be?" for one offset:
 //!   a string, a Unix timestamp, a UUID, and so on — always framed as guesses.
+//! * [`infer`] answers the shape question for a whole region: is there a
+//!   repeating record here, a table of offsets, a string pool, or padding?
 //!
 //! Nothing here decodes a *known* structure (that's the schema runtime); this
 //! is the discovery step that comes before you can write a schema.
@@ -14,7 +16,9 @@ mod dates;
 mod entropy;
 mod guess;
 mod strings;
+mod structure;
 
 pub use entropy::entropy;
 pub use guess::{analyze_at, Guess};
 pub use strings::{find_strings, Encoding, StringHit};
+pub use structure::{infer, Hint};

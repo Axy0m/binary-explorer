@@ -716,6 +716,62 @@ fn fix_checksums(
     })
 }
 
+/// Largest region the shape scan will look at. The periodicity search is the
+/// expensive part, and a record layout that is not visible in a megabyte is not
+/// one this can find anyway.
+const MAX_INFER_BYTES: usize = 1024 * 1024;
+
+/// What the shape scan looked at, and what it found.
+#[derive(Serialize)]
+struct StructureHints {
+    /// The region actually examined (clamped to the file and to a size cap).
+    offset: u64,
+    len: u64,
+    /// True when the request was larger than the cap.
+    clamped: bool,
+    hints: Vec<analysis::Hint>,
+}
+
+/// Guess the shape of a region: repeating records, an offset table, a string
+/// pool, padding. Local arithmetic over the bytes — nothing leaves the machine.
+#[tauri::command]
+fn infer_structure(
+    offset: u64,
+    length: u64,
+    state: State<AppState>,
+) -> Result<StructureHints, String> {
+    let guard = state.open.lock().unwrap();
+    let file = guard.as_ref().ok_or("no file open")?;
+
+    let total = file.reader.len();
+    let start = usize::try_from(offset).map_err(|_| "offset too large".to_string())?;
+    if start >= total {
+        return Ok(StructureHints {
+            offset,
+            len: 0,
+            clamped: false,
+            hints: Vec::new(),
+        });
+    }
+    let want = usize::try_from(length).unwrap_or(usize::MAX).min(total - start);
+    let len = want.min(MAX_INFER_BYTES);
+
+    let mut bytes = file
+        .reader
+        .read_bytes_at(start, len)
+        .map_err(|e| e.to_string())?
+        .to_vec();
+    // Scan what the user is looking at, edits included.
+    file.edits.apply_window(&mut bytes, start);
+
+    Ok(StructureHints {
+        offset,
+        len: len as u64,
+        clamped: len < want,
+        hints: analysis::infer(&bytes, offset, total as u64),
+    })
+}
+
 // ---------------------------------------------------------------------------
 // Compare against another file (aligned byte diff)
 // ---------------------------------------------------------------------------
@@ -1638,6 +1694,7 @@ pub fn run() {
             compare_read,
             compare_seek,
             compare_parse,
+            infer_structure,
             library_list,
             library_load,
             library_add,

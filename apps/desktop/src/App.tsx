@@ -10,6 +10,7 @@ import {
   findStrings,
   analyzeAt,
   entropy,
+  inferStructure,
   search,
   builtinSchema,
   setFieldValue,
@@ -46,6 +47,7 @@ import {
   type Interpretations,
   type StringHit,
   type Guess,
+  type StructureHints,
 } from "./api";
 import { HexView } from "./HexView";
 import { FieldBuilder, PREVIEW_CAP } from "./FieldBuilder";
@@ -89,6 +91,9 @@ export function App() {
   const [entropyData, setEntropyData] = useState<number[]>([]);
   const [viewMode, setViewMode] = useState<"hex" | "text">("hex");
   const [strings, setStrings] = useState<StringHit[]>([]);
+  /** What the bytes look like in the large: records, tables, pools, padding.
+   *  Scoped to the dragged selection when there is one, else the whole file. */
+  const [shape, setShape] = useState<StructureHints | null>(null);
   const [guesses, setGuesses] = useState<Guess[]>([]);
 
   // Search
@@ -294,6 +299,7 @@ export function App() {
       setBuiltin(detected.length > 0 ? await builtinSchema(detected[0].format) : null);
       setStrings(await findStrings(4));
       setEntropyData(await entropy(256));
+      setShape(null);
     } catch (e) {
       setError(String(e));
     }
@@ -361,6 +367,26 @@ export function App() {
       alive = false;
     };
   }, [selection, dragging, editVersion]);
+
+  // Shape hints follow the focus: a settled drag asks about that region, and
+  // with nothing selected the question is about the file as a whole.
+  useEffect(() => {
+    if (!file) {
+      setShape(null);
+      return;
+    }
+    const region =
+      selection && !dragging
+        ? { offset: selection.start, length: selection.end - selection.start }
+        : { offset: 0, length: file.len };
+    let alive = true;
+    inferStructure(region.offset, region.length)
+      .then((s) => alive && setShape(s))
+      .catch(() => alive && setShape(null));
+    return () => {
+      alive = false;
+    };
+  }, [file, selection, dragging, editVersion]);
 
   // Persist schema settings.
   useEffect(() => {
@@ -1169,8 +1195,30 @@ export function App() {
             </div>
 
             <div className="rpanel extras-panel">
-              <div className="col-head">Entropy · strings</div>
+              <div className="col-head">Shape · entropy · strings</div>
               <div className="col-body">
+                {shape && shape.hints.length > 0 && (
+                  <div className="hints">
+                    <div className="hints-head">
+                      what this looks like
+                      <span className="hints-region">
+                        0x{shape.offset.toString(16).toUpperCase()} ·{" "}
+                        {shape.len.toLocaleString()} B{shape.clamped ? " (capped)" : ""}
+                      </span>
+                    </div>
+                    {shape.hints.map((h, i) => (
+                      <button
+                        key={i}
+                        className="hint"
+                        onClick={() => selectByte(h.offset)}
+                        title={`Jump to 0x${h.offset.toString(16).toUpperCase()}`}
+                      >
+                        <span className="hint-label">{h.label}</span>
+                        <span className="hint-detail">{h.detail}</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
                 {entropyData.length > 0 && <EntropyStrip data={entropyData} fileLen={file.len} onSeek={selectByte} />}
                 <div className="strings-list">
                   {strings.slice(0, 200).map((s, i) => (
