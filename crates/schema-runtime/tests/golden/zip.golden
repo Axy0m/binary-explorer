@@ -1,20 +1,61 @@
-ZipLocalFileHeader: ZipLocalFileHeader  [@0 +35]
-  signature: bytes[4] = 50 4b 03 04  [@0 +4]  // local file header magic (50 4B 03 04)
-  versionNeeded: u16 = 20  [@4 +2]  // minimum version needed to extract
-  flags: ZipFlags  [@6 +2]  // general purpose bit flag
-    encrypted: bit 0 = false  [@6 +2]
-    dataDescriptor: bit 3 = false  [@6 +2]
-    enhancedDeflate: bit 4 = false  [@6 +2]
-    patchedData: bit 5 = false  [@6 +2]
-    strongEncrypt: bit 6 = false  [@6 +2]
-    utf8: bit 11 = true  [@6 +2]
-  method: ZipMethod = Deflated (8)  [@8 +2]  // compression method
-  modTime: u16 = 24576  [@10 +2]  // last mod file time (DOS format)
-  modDate: u16 = 20480  [@12 +2]  // last mod file date (DOS format)
-  crc32: u32 = 305419896  [@14 +4]  // CRC-32 of the uncompressed data
-  compressedSize: u32 = 100  [@18 +4]  // compressed size (0 if in data descriptor)
-  uncompressedSize: u32 = 200  [@22 +4]  // uncompressed size (0 if in data descriptor)
-  nameLength: u16 = 5  [@26 +2]  // file name length
-  extraLength: u16 = 0  [@28 +2]  // extra field length
-  fileName: string[nameLength] = "a.txt"  [@30 +5]  // file name
-  extra: bytes[extraLength]  [@35 +0]  // extra field
+ZIP: ZIP  [@0 +113]
+  files: repeat ZipLocalEntry  [@0 +40]
+    0: ZipLocalEntry  [@0 +40]
+      signature: bytes[4] = 50 4b 03 04  [@0 +4]  // local file header magic (50 4B 03 04)
+      versionNeeded: u16 = 20  [@4 +2]  // minimum version needed to extract
+      flags: ZipFlags  [@6 +2]  // general purpose bit flag
+        encrypted: bit 0 = false  [@6 +2]
+        dataDescriptor: bit 3 = false  [@6 +2]
+        enhancedDeflate: bit 4 = false  [@6 +2]
+        patchedData: bit 5 = false  [@6 +2]
+        strongEncrypt: bit 6 = false  [@6 +2]
+        utf8: bit 11 = true  [@6 +2]
+      method: ZipMethod = Stored (0)  [@8 +2]  // compression method
+      modTime: u16 = 24576  [@10 +2]  // last mod file time (DOS format)
+      modDate: u16 = 20480  [@12 +2]  // last mod file date (DOS format)
+      crc32: u32 = 305419896  [@14 +4]  // CRC-32 of the uncompressed data
+      compressedSize: u32 = 5  [@18 +4]  // compressed size (0 if in data descriptor)
+      uncompressedSize: u32 = 5  [@22 +4]  // uncompressed size (0 if in data descriptor)
+      nameLength: u16 = 5  [@26 +2]  // file name length
+      extraLength: u16 = 0  [@28 +2]  // extra field length
+      fileName: string[nameLength] = "a.txt"  [@30 +5]  // file name
+      extra: bytes[extraLength]  [@35 +0]  // extra field
+      data: bytes[compressedSize] = 68 65 6c 6c 6f  [@35 +5]  // the compressed bytes
+  central: repeat ZipCentralEntry  [@40 +51]
+    0: ZipCentralEntry  [@40 +51]
+      signature: bytes[4] = 50 4b 01 02  [@40 +4]  // central directory magic (50 4B 01 02)
+      versionMadeBy: u16 = 20  [@44 +2]  // version and host system that wrote this
+      versionNeeded: u16 = 20  [@46 +2]  // minimum version needed to extract
+      flags: ZipFlags  [@48 +2]  // general purpose bit flag
+        encrypted: bit 0 = false  [@48 +2]
+        dataDescriptor: bit 3 = false  [@48 +2]
+        enhancedDeflate: bit 4 = false  [@48 +2]
+        patchedData: bit 5 = false  [@48 +2]
+        strongEncrypt: bit 6 = false  [@48 +2]
+        utf8: bit 11 = true  [@48 +2]
+      method: ZipMethod = Stored (0)  [@50 +2]  // compression method
+      modTime: u16 = 24576  [@52 +2]  // last mod file time (DOS format)
+      modDate: u16 = 20480  [@54 +2]  // last mod file date (DOS format)
+      crc32: u32 = 305419896  [@56 +4]  // CRC-32 of the uncompressed data
+      compressedSize: u32 = 5  [@60 +4]  // compressed size
+      uncompressedSize: u32 = 5  [@64 +4]  // uncompressed size
+      nameLength: u16 = 5  [@68 +2]  // file name length
+      extraLength: u16 = 0  [@70 +2]  // extra field length
+      commentLength: u16 = 0  [@72 +2]  // file comment length
+      diskStart: u16 = 0  [@74 +2]  // disk this file starts on
+      internalAttrs: u16 = 0  [@76 +2]  // internal file attributes
+      externalAttrs: u32 = 0  [@78 +4]  // external file attributes
+      localOffset: u32 = 0  [@82 +4]  // offset of this file's local header
+      fileName: string[nameLength] = "a.txt"  [@86 +5]  // file name
+      extra: bytes[extraLength]  [@91 +0]  // extra field
+      comment: string[commentLength] = ""  [@91 +0]  // file comment
+  end: ZipEndOfCentralDir  [@91 +22]
+    signature: bytes[4] = 50 4b 05 06  [@91 +4]  // end of central directory magic (50 4B 05 06)
+    thisDisk: u16 = 0  [@95 +2]  // number of this disk
+    cdDisk: u16 = 0  [@97 +2]  // disk the central directory starts on
+    cdEntriesHere: u16 = 1  [@99 +2]  // central directory entries on this disk
+    cdEntriesTotal: u16 = 1  [@101 +2]  // central directory entries in total
+    cdSize: u32 = 51  [@103 +4]  // size of the central directory
+    cdOffset: u32 = 40  [@107 +4]  // offset of the central directory
+    commentLength: u16 = 0  [@111 +2]  // archive comment length
+    comment: string[commentLength] = ""  [@113 +0]  // archive comment

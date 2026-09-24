@@ -1,9 +1,8 @@
 // @name ZIP archive
-// @entry ZipLocalFileHeader
+// @entry ZIP
 // @endian le
-// @desc First local file header of a ZIP archive (PK\x03\x04) — method enum,
-//       general-purpose flag bitfield, and field-length name/extra. ZIP is
-//       always little-endian.
+// @desc Walks a whole archive — every local file entry, the central directory,
+//       and the end-of-central-directory record. ZIP is always little-endian.
 
 enum ZipMethod : u16 {
     Stored    = 0
@@ -30,7 +29,8 @@ bitfield ZipFlags : u16 {
     utf8           11  // file name / comment are UTF-8
 }
 
-struct ZipLocalFileHeader {
+// One stored file: its header, then the compressed bytes themselves.
+struct ZipLocalEntry {
     signature        bytes[4]   "local file header magic (50 4B 03 04)"
     versionNeeded    u16        "minimum version needed to extract"
     flags            ZipFlags   "general purpose bit flag"
@@ -43,5 +43,50 @@ struct ZipLocalFileHeader {
     nameLength       u16        "file name length"
     extraLength      u16        "extra field length"
     fileName         string[nameLength]  "file name"
-    extra            bytes[extraLength]   "extra field"
+    extra            bytes[extraLength]  "extra field"
+    data             bytes[compressedSize] "the compressed bytes"
+}
+
+// The archive's index: one record per file, holding where its local entry is.
+struct ZipCentralEntry {
+    signature        bytes[4]   "central directory magic (50 4B 01 02)"
+    versionMadeBy    u16        "version and host system that wrote this"
+    versionNeeded    u16        "minimum version needed to extract"
+    flags            ZipFlags   "general purpose bit flag"
+    method           ZipMethod  "compression method"
+    modTime          u16        "last mod file time (DOS format)"
+    modDate          u16        "last mod file date (DOS format)"
+    crc32            u32        "CRC-32 of the uncompressed data"
+    compressedSize   u32        "compressed size"
+    uncompressedSize u32        "uncompressed size"
+    nameLength       u16        "file name length"
+    extraLength      u16        "extra field length"
+    commentLength    u16        "file comment length"
+    diskStart        u16        "disk this file starts on"
+    internalAttrs    u16        "internal file attributes"
+    externalAttrs    u32        "external file attributes"
+    localOffset      u32        "offset of this file's local header"
+    fileName         string[nameLength]     "file name"
+    extra            bytes[extraLength]     "extra field"
+    comment          string[commentLength]  "file comment"
+}
+
+struct ZipEndOfCentralDir {
+    signature      bytes[4] "end of central directory magic (50 4B 05 06)"
+    thisDisk       u16      "number of this disk"
+    cdDisk         u16      "disk the central directory starts on"
+    cdEntriesHere  u16      "central directory entries on this disk"
+    cdEntriesTotal u16      "central directory entries in total"
+    cdSize         u32      "size of the central directory"
+    cdOffset       u32      "offset of the central directory"
+    commentLength  u16      "archive comment length"
+    comment        string[commentLength] "archive comment"
+}
+
+struct ZIP {
+    // Both sections are signature-terminated rather than counted, so each loop
+    // peeks at the next four bytes and stops before a record it does not own.
+    files   repeat ZipLocalEntry   while 0x50 0x4b 0x03 0x04
+    central repeat ZipCentralEntry while 0x50 0x4b 0x01 0x02
+    end     ZipEndOfCentralDir
 }

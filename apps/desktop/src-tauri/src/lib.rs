@@ -192,7 +192,7 @@ fn builtin_schema(app: AppHandle, format: String) -> Option<BuiltinSchema> {
         "PNG" => Some((include_str!("../../../../schemas/png.schema"), "PNG", "be")),
         "GZIP" => Some((include_str!("../../../../schemas/gzip.schema"), "Gzip", "le")),
         "ELF" => Some((include_str!("../../../../schemas/elf.schema"), "Elf64", "le")),
-        "ZIP" => Some((include_str!("../../../../schemas/zip.schema"), "ZipLocalFileHeader", "le")),
+        "ZIP" => Some((include_str!("../../../../schemas/zip.schema"), "ZIP", "le")),
         "PE" => Some((include_str!("../../../../schemas/pe.schema"), "PE", "le")),
         "SQLite" => Some((include_str!("../../../../schemas/sqlite.schema"), "SqliteHeader", "be")),
         "Mach-O" => Some((include_str!("../../../../schemas/macho.schema"), "MachHeader64", "le")),

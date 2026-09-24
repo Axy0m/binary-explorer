@@ -364,6 +364,9 @@ pub enum TypeExpr {
         elem: Box<TypeExpr>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         until: Option<Condition>,
+        /// A byte-pattern lookahead checked at the cursor *before* each element.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        guard: Option<RepeatGuard>,
     },
     /// A computed field: its value is an expression over earlier fields, and it
     /// reads no bytes from the file (`total = size - header`).
@@ -376,6 +379,24 @@ pub enum TypeExpr {
     /// ordinary — and without this the only way to read such a file was to
     /// parse it twice with different settings.
     Endian { big: bool, inner: Box<TypeExpr> },
+}
+
+/// A byte-pattern lookahead on a `repeat`: `while 0x50 0x4b 0x01 0x02` or
+/// `until 0x50 0x4b 0x05 0x06`.
+///
+/// This is the exclusive counterpart to `until <condition>`. That form is a
+/// post-condition — it reads an element and then asks whether to stop, which
+/// fits a terminator that is itself a valid element (PNG's IEND chunk). A
+/// signature-terminated format is the other shape: ZIP's central directory ends
+/// with an end-of-central-directory record that is *not* a directory entry, so
+/// the decision has to be made by peeking before anything is consumed.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RepeatGuard {
+    /// Bytes compared against the file at the cursor.
+    pub pattern: Vec<u8>,
+    /// `until` stops when the pattern matches; `while` stops when it no longer
+    /// does. Too few bytes left to compare counts as "no match".
+    pub stop_on_match: bool,
 }
 
 /// An integer arithmetic expression over field values (for computed fields).

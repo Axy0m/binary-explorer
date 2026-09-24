@@ -542,7 +542,7 @@ fn repeat_until_string_sentinel_parses() {
     )
     .expect("should parse");
     match &schema.structs[1].fields[0].ty {
-        TypeExpr::Repeat { elem, until } => {
+        TypeExpr::Repeat { elem, until, .. } => {
             assert_eq!(**elem, TypeExpr::Named("Chunk".into()));
             let cond = until.as_ref().expect("has an until clause");
             assert_eq!(cond.path, vec!["tag".to_string()]);
@@ -557,12 +557,64 @@ fn repeat_until_string_sentinel_parses() {
 fn repeat_without_until_parses() {
     let schema = parse("struct File { nums repeat u16 }").expect("should parse");
     match &schema.structs[0].fields[0].ty {
-        TypeExpr::Repeat { elem, until } => {
+        TypeExpr::Repeat { elem, until, .. } => {
             assert_eq!(**elem, TypeExpr::Prim(schema::Prim::U16));
             assert!(until.is_none());
         }
         other => panic!("expected repeat, got {other:?}"),
     }
+}
+
+// --- repeat lookahead -------------------------------------------------------
+
+#[test]
+fn a_while_pattern_parses_as_an_exclusive_guard() {
+    let schema = parse("struct E { a u8 }  struct S { es repeat E while 0x50 0x4b 0x01 0x02 }")
+        .expect("should parse");
+    match &schema.structs[1].fields[0].ty {
+        TypeExpr::Repeat { until, guard, .. } => {
+            assert!(until.is_none());
+            let g = guard.as_ref().expect("has a guard");
+            assert_eq!(g.pattern, vec![0x50, 0x4b, 0x01, 0x02]);
+            assert!(!g.stop_on_match, "`while` continues while it matches");
+        }
+        other => panic!("expected a repeat, got {other:?}"),
+    }
+}
+
+#[test]
+fn an_until_pattern_parses_as_a_stop_on_match_guard() {
+    let schema =
+        parse("struct E { a u8 }  struct S { es repeat E until 0x06 0x05 }").expect("should parse");
+    match &schema.structs[1].fields[0].ty {
+        TypeExpr::Repeat { guard, .. } => {
+            let g = guard.as_ref().unwrap();
+            assert_eq!(g.pattern, vec![0x06, 0x05]);
+            assert!(g.stop_on_match);
+        }
+        other => panic!("expected a repeat, got {other:?}"),
+    }
+}
+
+#[test]
+fn until_still_accepts_a_condition() {
+    // The original inclusive form must be unchanged: a condition starts with a
+    // field name, which is what tells the two apart.
+    let schema = parse("struct E { tag char[4] }  struct S { es repeat E until tag == \"IEND\" }")
+        .expect("should parse");
+    match &schema.structs[1].fields[0].ty {
+        TypeExpr::Repeat { until, guard, .. } => {
+            assert!(until.is_some());
+            assert!(guard.is_none());
+        }
+        other => panic!("expected a repeat, got {other:?}"),
+    }
+}
+
+#[test]
+fn a_pattern_value_above_255_is_rejected() {
+    let err = parse("struct E { a u8 }  struct S { es repeat E while 300 }").unwrap_err();
+    assert!(matches!(err, ParseError::BadBytePattern { value: 300, .. }), "got {err:?}");
 }
 
 // --- per-type endianness ----------------------------------------------------

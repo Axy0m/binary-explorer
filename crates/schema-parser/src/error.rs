@@ -62,4 +62,7 @@ pub enum ParseError {
 
     #[error("expected `over(<field>)` or `over(<first> .. <last>)` after `check {algo}` at line {}, col {}", span.line, span.col)]
     ExpectedOver { algo: String, span: Span },
+
+    #[error("{value} is not a byte (0..255) in the pattern at line {}, col {}", span.line, span.col)]
+    BadBytePattern { value: u64, span: Span },
 }

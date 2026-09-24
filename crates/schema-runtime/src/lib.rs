@@ -501,6 +501,17 @@ impl Runtime<'_> {
         Ok((node, next))
     }
 
+    /// Whether the file's bytes at `offset` start with `pattern`.
+    ///
+    /// Too few bytes left is "no match" rather than an error: a truncated file
+    /// should end a `repeat` loop, not fault it.
+    fn peek_matches(&self, pattern: &[u8], offset: usize) -> bool {
+        match self.reader.read_bytes_at(offset, pattern.len()) {
+            Ok(bytes) => bytes == pattern,
+            Err(_) => false,
+        }
+    }
+
     /// Recompute a `check` field's checksum over the span it names.
     ///
     /// The span is resolved against siblings already read in this struct, which
@@ -850,7 +861,7 @@ impl Runtime<'_> {
                     None => Err(RuntimeError::NoMatchingArm(shown)),
                 }
             }
-            TypeExpr::Repeat { elem, until } => {
+            TypeExpr::Repeat { elem, until, guard } => {
                 let mut children = Vec::new();
                 let mut cursor = offset;
                 let end = self.reader.len();
@@ -858,6 +869,14 @@ impl Runtime<'_> {
                     // Stop cleanly at end of file rather than reading past it.
                     if cursor >= end {
                         break;
+                    }
+                    // Byte-pattern lookahead: decided before anything is read, so
+                    // a terminator that is not a valid element (ZIP's
+                    // end-of-central-directory record) is never consumed.
+                    if let Some(g) = guard {
+                        if self.peek_matches(&g.pattern, cursor) == g.stop_on_match {
+                            break;
+                        }
                     }
                     if children.len() >= MAX_ITERS {
                         return Err(RuntimeError::RepeatOverrun(MAX_ITERS));

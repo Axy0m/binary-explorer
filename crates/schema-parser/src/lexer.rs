@@ -32,6 +32,8 @@ pub enum TokenKind {
     Repeat,
     /// The `until` keyword (the sentinel condition of a `repeat`).
     Until,
+    /// The `while` keyword (a `repeat` continues while a byte pattern matches).
+    While,
     /// The `decode` keyword (a byte transform on a field).
     Decode,
     /// The `check` keyword (a checksum clause on a field).
@@ -121,6 +123,7 @@ impl TokenKind {
             TokenKind::Until => "keyword `until`".into(),
             TokenKind::Decode => "keyword `decode`".into(),
             TokenKind::Check => "keyword `check`".into(),
+            TokenKind::While => "keyword `while`".into(),
             TokenKind::As => "keyword `as`".into(),
             TokenKind::Comma => "`,`".into(),
             TokenKind::FatArrow => "`=>`".into(),
@@ -421,6 +424,7 @@ impl<'a> Lexer<'a> {
             "until" => TokenKind::Until,
             "decode" => TokenKind::Decode,
             "check" => TokenKind::Check,
+            "while" => TokenKind::While,
             "as" => TokenKind::As,
             _ => TokenKind::Ident(text.to_string()),
         }

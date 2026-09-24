@@ -27,7 +27,7 @@ use crate::lexer::{Token, TokenKind};
 use schema::{
     BinOp, BitMember, BitfieldDef, Check, CheckSpan, Checksum, Compare, CompareOp, CompareValue,
     Condition, Decode, EnumDef, EnumVariant, Expr, Field, Len, MatchArm, MatchKey, Pointer, Prim,
-    Schema, StructDef, Transform, TypeExpr,
+    RepeatGuard, Schema, StructDef, Transform, TypeExpr,
 };
 
 /// Split a `be`/`le` suffix off a primitive keyword: `u32be`, `f64le`.
@@ -667,16 +667,51 @@ impl Parser {
     fn parse_repeat(&mut self) -> Result<TypeExpr, ParseError> {
         self.expect(&TokenKind::Repeat, "keyword `repeat`")?;
         let elem = self.parse_type()?;
-        let until = if matches!(self.peek(), Some(t) if t.kind == TokenKind::Until) {
+        let mut until = None;
+        let mut guard = None;
+
+        // `until` takes either a condition on the element just read (inclusive,
+        // the original form) or a byte pattern to peek for (exclusive). The two
+        // are told apart by their first token: a condition always starts with a
+        // field name, a pattern with a number.
+        if matches!(self.peek(), Some(t) if t.kind == TokenKind::Until) {
             self.advance();
-            Some(self.parse_condition()?)
-        } else {
-            None
-        };
+            if matches!(self.peek(), Some(Token { kind: TokenKind::Int(_), .. })) {
+                guard = Some(RepeatGuard {
+                    pattern: self.parse_byte_pattern()?,
+                    stop_on_match: true,
+                });
+            } else {
+                until = Some(self.parse_condition()?);
+            }
+        } else if matches!(self.peek(), Some(t) if t.kind == TokenKind::While) {
+            self.advance();
+            guard = Some(RepeatGuard {
+                pattern: self.parse_byte_pattern()?,
+                stop_on_match: false,
+            });
+        }
+
         Ok(TypeExpr::Repeat {
             elem: Box::new(elem),
             until,
+            guard,
         })
+    }
+
+    /// Parse a run of byte literals: `0x50 0x4b 0x01 0x02`.
+    fn parse_byte_pattern(&mut self) -> Result<Vec<u8>, ParseError> {
+        let mut pattern = Vec::new();
+        loop {
+            let (value, span) = self.expect_int("a byte (0..255) in the pattern")?;
+            if value > 0xFF {
+                return Err(ParseError::BadBytePattern { value, span });
+            }
+            pattern.push(value as u8);
+            if !matches!(self.peek(), Some(Token { kind: TokenKind::Int(_), .. })) {
+                return Ok(pattern);
+            }
+        }
     }
 
     /// Parse a conditional guard: `<path> [<op> <int>]`, where `path` is a

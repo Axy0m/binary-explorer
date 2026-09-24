@@ -1278,3 +1278,78 @@ fn an_override_does_not_leak_past_a_fault() {
     let out = run_partial(src, "S", vec![0, 1], Endian::Little);
     assert!(out.fault.is_some(), "a short read should fault");
 }
+
+// --- repeat lookahead -------------------------------------------------------
+
+/// Three 4-byte records tagged `0xAA`, then a differently-tagged trailer.
+fn tagged_records() -> Vec<u8> {
+    let mut bytes = Vec::new();
+    for payload in [1u8, 2, 3] {
+        bytes.extend_from_slice(&[0xAA, payload, 0, 0]);
+    }
+    bytes.extend_from_slice(&[0xBB, 0xFF, 0xFF, 0xFF]); // the terminator record
+    bytes
+}
+
+#[test]
+fn while_walks_matching_records_and_leaves_the_terminator_unconsumed() {
+    let src = "struct Rec { tag u8  payload u8  pad u16 }
+        struct S { recs repeat Rec while 0xAA  trailer Rec }";
+    let root = run(src, "S", tagged_records(), Endian::Little);
+    let recs = child(&root, "recs");
+    assert_eq!(recs.children.len(), 3, "stops before the 0xBB record");
+    // The loop must not have consumed the terminator - the field after it reads
+    // the record the loop declined.
+    assert_eq!(recs.size, 12);
+    assert_eq!(child(child(&root, "trailer"), "tag").value, Value::U(0xBB));
+}
+
+#[test]
+fn until_stops_before_a_terminator_that_is_not_a_valid_element() {
+    // The exclusive counterpart: stop when the sentinel is seen, without
+    // consuming it. This is the shape `until <condition>` cannot express.
+    let src = "struct Rec { tag u8  payload u8  pad u16 }
+        struct S { recs repeat Rec until 0xBB  trailer Rec }";
+    let root = run(src, "S", tagged_records(), Endian::Little);
+    assert_eq!(child(&root, "recs").children.len(), 3);
+    assert_eq!(child(child(&root, "trailer"), "tag").value, Value::U(0xBB));
+}
+
+#[test]
+fn a_while_pattern_that_never_matches_yields_no_elements() {
+    let src = "struct Rec { tag u8  payload u8  pad u16 }
+        struct S { recs repeat Rec while 0xCC }";
+    let root = run(src, "S", tagged_records(), Endian::Little);
+    let recs = child(&root, "recs");
+    assert!(recs.children.is_empty());
+    assert_eq!(recs.size, 0, "an empty loop consumes nothing");
+}
+
+#[test]
+fn a_multi_byte_pattern_matches_a_signature() {
+    // The ZIP shape: records introduced by a 4-byte signature.
+    let src = "struct Entry { sig bytes[4]  value u16 }
+        struct S { entries repeat Entry while 0x50 0x4b 0x01 0x02 }";
+    let mut bytes = Vec::new();
+    for v in [10u16, 20] {
+        bytes.extend_from_slice(&[0x50, 0x4b, 0x01, 0x02]);
+        bytes.extend_from_slice(&v.to_le_bytes());
+    }
+    bytes.extend_from_slice(&[0x50, 0x4b, 0x05, 0x06]); // end-of-central-dir
+    let root = run(src, "S", bytes, Endian::Little);
+    let entries = child(&root, "entries");
+    assert_eq!(entries.children.len(), 2, "the 05 06 record is not an entry");
+}
+
+#[test]
+fn a_pattern_running_past_the_end_of_the_file_ends_the_loop_cleanly() {
+    // Only two bytes remain, so a 4-byte pattern cannot be compared. That has to
+    // stop the loop, not fault it.
+    let src = "struct Entry { sig bytes[4] }
+        struct S { entries repeat Entry while 0x50 0x4b 0x01 0x02 }";
+    let mut bytes = vec![0x50, 0x4b, 0x01, 0x02];
+    bytes.extend_from_slice(&[0x50, 0x4b]);
+    let out = run_partial(src, "S", bytes, Endian::Little);
+    assert!(out.fault.is_none(), "a truncated tail should not fault: {:?}", out.fault);
+    assert_eq!(child(&out.tree, "entries").children.len(), 1);
+}

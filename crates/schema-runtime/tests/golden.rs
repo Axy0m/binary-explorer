@@ -291,23 +291,59 @@ fn golden_gzip() {
 
 #[test]
 fn golden_zip() {
-    // Local file header for a stored 5-char name, no extra field, UTF-8 flag.
+    // A whole (tiny) archive: one stored file, its central directory record, and
+    // the end-of-central-directory record. Both sections are walked by the
+    // signature lookahead, so this fixture is what proves each loop stops at its
+    // own section boundary instead of swallowing the next one.
     let name = "a.txt";
+    let data = b"hello";
+    let local_size = 30 + name.len() + data.len();
+    let central_size = 46 + name.len();
     let bytes = B::new()
+        // -- local file entry --
         .raw(&[0x50, 0x4B, 0x03, 0x04]) // signature PK\x03\x04
         .u16le(20) // versionNeeded
         .u16le(0x0800) // flags: utf8 (bit 11)
-        .u16le(8) // method -> Deflated
+        .u16le(0) // method -> Stored
         .u16le(0x6000) // modTime
         .u16le(0x5000) // modDate
         .u32le(0x1234_5678) // crc32
-        .u32le(100) // compressedSize
-        .u32le(200) // uncompressedSize
+        .u32le(data.len() as u32) // compressedSize
+        .u32le(data.len() as u32) // uncompressedSize
         .u16le(name.len() as u16) // nameLength
         .u16le(0) // extraLength
         .ascii(name) // fileName
+        .raw(data) // the stored bytes
+        // -- central directory record --
+        .raw(&[0x50, 0x4B, 0x01, 0x02]) // signature PK\x01\x02
+        .u16le(20) // versionMadeBy
+        .u16le(20) // versionNeeded
+        .u16le(0x0800) // flags
+        .u16le(0) // method -> Stored
+        .u16le(0x6000) // modTime
+        .u16le(0x5000) // modDate
+        .u32le(0x1234_5678) // crc32
+        .u32le(data.len() as u32) // compressedSize
+        .u32le(data.len() as u32) // uncompressedSize
+        .u16le(name.len() as u16) // nameLength
+        .u16le(0) // extraLength
+        .u16le(0) // commentLength
+        .u16le(0) // diskStart
+        .u16le(0) // internalAttrs
+        .u32le(0) // externalAttrs
+        .u32le(0) // localOffset
+        .ascii(name) // fileName
+        // -- end of central directory --
+        .raw(&[0x50, 0x4B, 0x05, 0x06]) // signature PK\x05\x06
+        .u16le(0) // thisDisk
+        .u16le(0) // cdDisk
+        .u16le(1) // cdEntriesHere
+        .u16le(1) // cdEntriesTotal
+        .u32le(central_size as u32) // cdSize
+        .u32le(local_size as u32) // cdOffset
+        .u16le(0) // commentLength
         .build();
-    golden("zip", ZIP, "ZipLocalFileHeader", Endian::Little, bytes);
+    golden("zip", ZIP, "ZIP", Endian::Little, bytes);
 }
 
 #[test]

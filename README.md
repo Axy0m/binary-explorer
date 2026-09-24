@@ -68,7 +68,9 @@ GzModule
 - Pointers — read a field at an offset held elsewhere (`at`, `at +`)
 - Conditional fields (`if`) and computed fields (arithmetic over earlier fields)
 - Tag-dispatched unions — `match tag { 1 => Header  "PLYR" => Player }`
-- Iteration — `repeat T [until <cond>]` for TLV / chunk / box formats
+- Iteration — `repeat T until <cond>` for TLV / chunk / box formats, or a
+  byte-pattern lookahead (`while 0x50 0x4b 0x01 0x02`) for the
+  signature-terminated ones, which stops without consuming the terminator
 - Inline transforms — `bytes[n] decode <t> [as <Type>]` for
   `xor` / `rolling_xor` / `add` / `base64` / `zlib` / `inflate` / `gunzip`
 - Variable-length integers — `varint` / `svarint` (LEB128)
