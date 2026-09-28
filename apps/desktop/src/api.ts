@@ -165,7 +165,7 @@ export function detectFormat(): Promise<Detection[]> {
 export interface StringHit {
   offset: number;
   len: number;
-  encoding: "ascii" | "utf16_le";
+  encoding: "ascii" | "utf16_le" | "utf16_be";
   text: string;
 }
 

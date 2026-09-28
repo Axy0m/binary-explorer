@@ -37,6 +37,39 @@ fn finds_utf16le_string() {
 }
 
 #[test]
+fn finds_utf16be_string() {
+    // "OK!" as UTF-16BE: 00 'O' 00 'K' 00 '!' — the order Java and most
+    // over-the-wire formats write.
+    let bytes = vec![0, b'O', 0, b'K', 0, b'!'];
+    let hits = find_strings(&bytes, 2);
+    let utf16: Vec<_> = hits.iter().filter(|h| h.encoding == Encoding::Utf16Be).collect();
+    assert_eq!(utf16.len(), 1, "{hits:?}");
+    assert_eq!(utf16[0].text, "OK!");
+    assert_eq!(utf16[0].offset, 0);
+    assert_eq!(utf16[0].len, 6);
+}
+
+#[test]
+fn a_utf16_string_is_not_also_reported_in_the_other_byte_order() {
+    // Read one byte later, a UTF-16LE string is a shorter UTF-16BE one. Only
+    // the reading that starts first and covers the whole run should survive.
+    let bytes = vec![b'N', 0, b'a', 0, b'm', 0, b'e', 0];
+    let hits = find_strings(&bytes, 2);
+    let utf16: Vec<_> = hits.iter().filter(|h| h.encoding != Encoding::Ascii).collect();
+    assert_eq!(utf16.len(), 1, "{hits:?}");
+    assert_eq!(utf16[0].encoding, Encoding::Utf16Le);
+    assert_eq!(utf16[0].text, "Name");
+
+    // And the same in reverse, for a genuinely big-endian run.
+    let bytes = vec![0, b'N', 0, b'a', 0, b'm', 0, b'e'];
+    let hits = find_strings(&bytes, 2);
+    let utf16: Vec<_> = hits.iter().filter(|h| h.encoding != Encoding::Ascii).collect();
+    assert_eq!(utf16.len(), 1, "{hits:?}");
+    assert_eq!(utf16[0].encoding, Encoding::Utf16Be);
+    assert_eq!(utf16[0].text, "Name");
+}
+
+#[test]
 fn no_strings_in_pure_binary() {
     let bytes = [0x00, 0x01, 0x02, 0xFE, 0xFF];
     assert!(find_strings(&bytes, 4).is_empty());

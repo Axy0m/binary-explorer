@@ -2,7 +2,8 @@
 //!
 //! Two tools for reverse-engineering a file whose layout you don't know:
 //!
-//! * [`find_strings`] scans for runs of readable text (ASCII and UTF-16LE) —
+//! * [`find_strings`] scans for runs of readable text (ASCII, UTF-16LE and
+//!   UTF-16BE) —
 //!   names, paths, and tags usually jump straight out of a binary this way.
 //! * [`analyze_at`] answers "what could the bytes here be?" for one offset:
 //!   a string, a time in any of the encodings that are actually used, a UUID,

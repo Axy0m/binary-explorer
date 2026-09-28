@@ -470,6 +470,7 @@ fn strings_cmd(args: &[String]) -> Result<(), Fail> {
             let encoding = match hit.encoding {
                 analysis::Encoding::Ascii => "ascii",
                 analysis::Encoding::Utf16Le => "utf16le",
+                analysis::Encoding::Utf16Be => "utf16be",
             };
             println!("{:#010x} +{:<6} {encoding:<8} {}", at + hit.offset as u64, hit.len, hit.text);
         }
