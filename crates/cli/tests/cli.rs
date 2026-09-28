@@ -119,6 +119,41 @@ fn a_failing_checksum_fails_the_parse_even_though_the_bytes_decode() {
 }
 
 #[test]
+fn min_coverage_catches_a_schema_that_stopped_explaining_the_file() {
+    // The schema reads four bytes and the file has eight. Every field parses,
+    // so nothing else here would call it a failure — but half the file is
+    // unaccounted for, which is what a format that grew a section looks like.
+    let (schema, _) = pair("coverage");
+    let long = fixture("coverage_long.bin", &[1, 0, 2, 0, 9, 9, 9, 9]);
+    let path = long.to_str().unwrap();
+
+    assert_eq!(
+        code(&nybble(&["parse", schema.to_str().unwrap(), path, "--quiet"])),
+        0,
+        "without a floor, a clean parse is still a pass"
+    );
+    let out = nybble(&[
+        "parse",
+        schema.to_str().unwrap(),
+        path,
+        "--min-coverage",
+        "90",
+    ]);
+    assert_eq!(code(&out), 1, "50% coverage should not clear a 90% floor");
+
+    assert_eq!(
+        code(&nybble(&["parse", schema.to_str().unwrap(), path, "--min-coverage", "50"])),
+        0,
+        "and exactly meeting the floor passes"
+    );
+    assert_eq!(
+        code(&nybble(&["parse", schema.to_str().unwrap(), path, "--min-coverage", "several"])),
+        2,
+        "a floor that is not a percentage is a usage error"
+    );
+}
+
+#[test]
 fn diff_exits_zero_only_when_the_files_are_identical() {
     let a = fixture("diff_a.bin", b"hello world");
     let same = fixture("diff_same.bin", b"hello world");

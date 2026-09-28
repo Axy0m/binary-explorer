@@ -39,6 +39,9 @@ USAGE:
 PARSE OPTIONS:
     --entry <name>   entry struct (default: the schema's @entry, else the first)
     --endian le|be   byte order (default: the schema's @endian, else le)
+    --min-coverage <pct>
+                     fail unless the schema explains at least this much of the
+                     file (a percentage, e.g. 95 or 99.5)
     --json           emit the field tree as JSON
     --quiet          print nothing; report the outcome as the exit status
 
@@ -126,6 +129,7 @@ struct Args {
     limit: Option<usize>,
     min: Option<usize>,
     buckets: Option<usize>,
+    min_coverage: Option<f64>,
     at: Option<u64>,
     len: Option<u64>,
 }
@@ -140,6 +144,7 @@ fn parse_args(args: &[String]) -> Result<Args, Fail> {
         limit: None,
         min: None,
         buckets: None,
+        min_coverage: None,
         at: None,
         len: None,
     };
@@ -176,6 +181,18 @@ fn parse_args(args: &[String]) -> Result<Args, Fail> {
                 out.buckets = Some(raw.parse().map_err(|_| {
                     Fail::Usage(format!("--buckets wants a number, got `{raw}`"))
                 })?);
+            }
+            "--min-coverage" => {
+                let raw = value("--min-coverage")?;
+                let pct: f64 = raw.parse().map_err(|_| {
+                    Fail::Usage(format!("--min-coverage wants a percentage, got `{raw}`"))
+                })?;
+                if !(0.0..=100.0).contains(&pct) {
+                    return Err(Fail::Usage(format!(
+                        "--min-coverage wants a percentage between 0 and 100, got `{raw}`"
+                    )));
+                }
+                out.min_coverage = Some(pct);
             }
             "--at" => out.at = Some(number(&value("--at")?, "--at")?),
             "--len" => out.len = Some(number(&value("--len")?, "--len")?),
@@ -305,6 +322,21 @@ fn parse_cmd(args: &[String]) -> Result<(), Fail> {
             eprintln!("{bad_checks} checksum(s) do not match");
         }
         return Err(Fail::Mismatch);
+    }
+    // A schema can parse a file cleanly and still have stopped understanding it
+    // halfway through — a `repeat` that ended early, a section the format grew.
+    // Nothing else catches that, so CI can put a floor under it.
+    if let Some(floor) = args.min_coverage {
+        let actual = outcome.coverage.fraction() * 100.0;
+        if actual < floor {
+            if !args.quiet && !args.json {
+                eprintln!(
+                    "coverage {actual:.1}% is below the required {floor}% — {} byte(s) unexplained",
+                    outcome.coverage.total - outcome.coverage.covered
+                );
+            }
+            return Err(Fail::Mismatch);
+        }
     }
     Ok(())
 }

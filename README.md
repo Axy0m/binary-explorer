@@ -231,6 +231,15 @@ error. So this is a valid CI check:
 nybble parse formats/firmware.schema build/out.bin --quiet || exit 1
 ```
 
+A clean parse is not the same as a complete one — a `repeat` that stopped early
+or a section the format grew will still read without a fault. `--min-coverage`
+puts a floor under how much of the file the schema has to account for, so that
+drift fails the build instead of passing quietly:
+
+```sh
+nybble parse formats/firmware.schema build/out.bin --min-coverage 99 --quiet
+```
+
 ```sh
 cargo run -p nybble-cli -- parse <schema> <file>   # without installing
 ```
