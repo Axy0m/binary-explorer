@@ -71,3 +71,13 @@ pub fn hex(bytes: &[u8]) -> String {
         .collect::<Vec<_>>()
         .join(" ")
 }
+
+/// The ASCII column of a hex dump: printable bytes as themselves, everything
+/// else as a dot. A changed run is often a name or a path, and the hex alone
+/// does not show that.
+pub fn ascii(bytes: &[u8]) -> String {
+    bytes
+        .iter()
+        .map(|b| if (0x20..=0x7E).contains(b) { *b as char } else { '.' })
+        .collect()
+}

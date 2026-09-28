@@ -400,15 +400,20 @@ fn diff_cmd(args: &[String]) -> Result<(), Fail> {
                     d.common_len()
                 );
             }
+            // Left is `a`, right is `b`: the same direction as the argument
+            // order, and as the `old -> new` the parse tree shows for a field.
             for run in d.runs().iter().take(limit) {
                 let from = run.offset as usize;
                 let to = (run.end() as usize).min(from + 16);
+                let (was, now) = (&a[from..to], &b[from..to]);
                 println!(
-                    "  {:#010x} +{:<6} {} -> {}",
+                    "  {:#010x} +{:<6} {} |{}|  ->  {} |{}|",
                     run.offset,
                     run.len,
-                    render::hex(&b[from..to]),
-                    render::hex(&a[from..to]),
+                    render::hex(was),
+                    render::ascii(was),
+                    render::hex(now),
+                    render::ascii(now),
                 );
             }
             if d.runs().len() > limit {

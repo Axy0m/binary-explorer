@@ -169,6 +169,24 @@ fn diff_exits_zero_only_when_the_files_are_identical() {
 }
 
 #[test]
+fn a_changed_run_is_listed_from_the_first_file_to_the_second() {
+    // `diff a b` reads "a became b", the same direction the parse tree shows a
+    // changed field in. Printing it the other way round is silently wrong: both
+    // sides are plausible hex, so nothing about the output looks off.
+    let before = fixture("diff_dir_a.bin", b"name=alpha");
+    let after = fixture("diff_dir_b.bin", b"name=OMEGA");
+    let out = nybble(&["diff", before.to_str().unwrap(), after.to_str().unwrap()]);
+    let row = stdout(&out)
+        .lines()
+        .find(|l| l.trim_start().starts_with("0x"))
+        .expect("a changed region should be listed")
+        .to_string();
+    let (left, right) = row.split_once("->").expect("a row shows both sides");
+    assert!(left.contains("|alpha|"), "the left side is the first file: {row}");
+    assert!(right.contains("|OMEGA|"), "the right side is the second: {row}");
+}
+
+#[test]
 fn detect_identifies_a_png_and_gives_up_on_noise() {
     let png = fixture(
         "detect.png",
