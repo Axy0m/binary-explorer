@@ -34,7 +34,7 @@ dependencies = [
 
 [[package]]
 name = "analysis"
-version = "0.2.0"
+version = "0.4.0"
 dependencies = [
  "serde",
 ]
@@ -103,7 +103,7 @@ checksum = "72b3254f16251a8381aa12e40e3c4d2f0199f8c6508fbecb9d91f575e0fbb8c6"
 
 [[package]]
 name = "binary-explorer-desktop"
-version = "0.2.0"
+version = "0.4.0"
 dependencies = [
  "analysis",
  "base64 0.22.1",
@@ -126,7 +126,7 @@ dependencies = [
 
 [[package]]
 name = "binary-reader"
-version = "0.2.0"
+version = "0.4.0"
 dependencies = [
  "memmap2",
  "tempfile",
@@ -610,7 +610,7 @@ dependencies = [
 
 [[package]]
 name = "diff"
-version = "0.2.0"
+version = "0.4.0"
 dependencies = [
  "serde",
 ]
@@ -832,7 +832,7 @@ dependencies = [
 
 [[package]]
 name = "file-editing"
-version = "0.2.0"
+version = "0.4.0"
 dependencies = [
  "binary-reader",
 ]
@@ -903,7 +903,7 @@ dependencies = [
 
 [[package]]
 name = "format-detection"
-version = "0.2.0"
+version = "0.4.0"
 dependencies = [
  "serde",
 ]
@@ -1981,7 +1981,7 @@ dependencies = [
 
 [[package]]
 name = "nybble-cli"
-version = "0.2.0"
+version = "0.4.0"
 dependencies = [
  "analysis",
  "binary-reader",
@@ -2335,7 +2335,7 @@ dependencies = [
 
 [[package]]
 name = "plugin-host"
-version = "0.2.0"
+version = "0.4.0"
 dependencies = [
  "serde",
  "toml 0.8.2",
@@ -2722,21 +2722,21 @@ dependencies = [
 
 [[package]]
 name = "schema"
-version = "0.2.0"
+version = "0.4.0"
 dependencies = [
  "serde",
 ]
 
 [[package]]
 name = "schema-library"
-version = "0.2.0"
+version = "0.4.0"
 dependencies = [
  "serde",
 ]
 
 [[package]]
 name = "schema-parser"
-version = "0.2.0"
+version = "0.4.0"
 dependencies = [
  "schema",
  "thiserror 2.0.20",
@@ -2744,7 +2744,7 @@ dependencies = [
 
 [[package]]
 name = "schema-runtime"
-version = "0.2.0"
+version = "0.4.0"
 dependencies = [
  "binary-reader",
  "flate2",
@@ -2813,7 +2813,7 @@ checksum = "94143f37725109f92c262ed2cf5e59bce7498c01bcc1502d7b9afe439a4e9f49"
 
 [[package]]
 name = "search"
-version = "0.2.0"
+version = "0.4.0"
 
 [[package]]
 name = "selectors"
