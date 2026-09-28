@@ -220,6 +220,20 @@ fn entropy_separates_a_packed_region_from_a_flat_one() {
 }
 
 #[test]
+fn detect_only_needs_the_head_of_a_file() {
+    // A tar's signature sits at offset 257 and nothing is anchored deeper, so
+    // a file with megabytes of body after it must still be identified from the
+    // first few hundred bytes alone.
+    let mut tar = vec![0u8; 300];
+    tar[257..262].copy_from_slice(b"ustar");
+    tar.extend(std::iter::repeat_n(0xAB, 4 * 1024 * 1024));
+    let file = fixture("detect_big.tar", &tar);
+    let out = nybble(&["detect", file.to_str().unwrap()]);
+    assert_eq!(code(&out), 0);
+    assert!(stdout(&out).contains("TAR"), "{}", stdout(&out));
+}
+
+#[test]
 fn usage_errors_are_distinguishable_from_mismatches() {
     // Exit 2 means "you held it wrong", so a script can tell a bad invocation
     // apart from a file that simply did not match.

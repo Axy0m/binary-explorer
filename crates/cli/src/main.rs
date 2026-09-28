@@ -16,6 +16,7 @@
 //! nybble check my.schema                          # does the schema compile?
 //! ```
 
+use std::io::Read;
 use std::process::ExitCode;
 
 use binary_reader::{BinaryReader, Endian};
@@ -199,6 +200,19 @@ fn number(raw: &str, flag: &str) -> Result<u64, Fail> {
 
 fn read_file(path: &str) -> Result<Vec<u8>, Fail> {
     std::fs::read(path).map_err(|e| Fail::Error(format!("{path}: {e}")))
+}
+
+/// Read at most `limit` bytes from the front of a file.
+///
+/// For the questions that only look at a header, this is the difference between
+/// touching a page and paging in a multi-gigabyte firmware image.
+fn read_head(path: &str, limit: usize) -> Result<Vec<u8>, Fail> {
+    let file = std::fs::File::open(path).map_err(|e| Fail::Error(format!("{path}: {e}")))?;
+    let mut head = Vec::with_capacity(limit);
+    file.take(limit as u64)
+        .read_to_end(&mut head)
+        .map_err(|e| Fail::Error(format!("{path}: {e}")))?;
+    Ok(head)
 }
 
 /// The slice `--at` and `--len` select, plus the file offset it starts at. Both
@@ -385,8 +399,10 @@ fn detect_cmd(args: &[String]) -> Result<(), Fail> {
     let [path] = args.positional.as_slice() else {
         return Err(Fail::Usage("detect takes one file".into()));
     };
-    // Only the head is needed: every signature is anchored near the start.
-    let bytes = read_file(path)?;
+    // Every signature is anchored near the start — the deepest one ends at 262 —
+    // so there is no reason to pull a whole disk image through memory to answer.
+    const HEAD: usize = 512;
+    let bytes = read_head(path, HEAD)?;
     let hits = format_detection::detect(&bytes);
 
     if args.json {
