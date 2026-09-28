@@ -11,6 +11,7 @@
 //! nybble diff before.sav after.sav                # changed regions
 //! nybble detect firmware.bin                      # what is this?
 //! nybble strings firmware.bin --min 6          # readable text, with offsets
+//! nybble entropy firmware.bin                   # where is the packed data?
 //! nybble hints firmware.bin --at 0x4000           # what shape are these bytes?
 //! nybble check my.schema                          # does the schema compile?
 //! ```
@@ -30,6 +31,7 @@ USAGE:
     nybble diff <a> <b> [options]            compare two files, byte-aligned
     nybble detect <file>                     identify a format from its magic bytes
     nybble strings <file> [options]          list the readable text in a file
+    nybble entropy <file> [options]          measure how random the bytes are
     nybble hints <file> [options]            guess the shape of a region of bytes
     nybble check <schema>                    validate that a schema compiles
 
@@ -49,6 +51,12 @@ STRINGS OPTIONS:
     --len <n>        how many bytes to look at (default: to the end)
     --limit <n>      how many strings to list (default: all)
     --json           emit the strings as JSON
+
+ENTROPY OPTIONS:
+    --buckets <n>    how many slices to measure (default 64)
+    --at <offset>    where to start looking (decimal or 0x…; default 0)
+    --len <n>        how many bytes to look at (default: to the end)
+    --json           emit the per-bucket values as JSON
 
 HINTS OPTIONS:
     --at <offset>    where to start looking (decimal or 0x…; default 0)
@@ -71,6 +79,7 @@ fn main() -> ExitCode {
         "diff" => diff_cmd(rest),
         "detect" => detect_cmd(rest),
         "strings" => strings_cmd(rest),
+        "entropy" => entropy_cmd(rest),
         "hints" => hints_cmd(rest),
         "check" => check_cmd(rest),
         "-h" | "--help" | "help" => {
@@ -115,6 +124,7 @@ struct Args {
     endian: Option<String>,
     limit: Option<usize>,
     min: Option<usize>,
+    buckets: Option<usize>,
     at: Option<u64>,
     len: Option<u64>,
 }
@@ -128,6 +138,7 @@ fn parse_args(args: &[String]) -> Result<Args, Fail> {
         endian: None,
         limit: None,
         min: None,
+        buckets: None,
         at: None,
         len: None,
     };
@@ -158,6 +169,12 @@ fn parse_args(args: &[String]) -> Result<Args, Fail> {
                     raw.parse()
                         .map_err(|_| Fail::Usage(format!("--min wants a number, got `{raw}`")))?,
                 );
+            }
+            "--buckets" => {
+                let raw = value("--buckets")?;
+                out.buckets = Some(raw.parse().map_err(|_| {
+                    Fail::Usage(format!("--buckets wants a number, got `{raw}`"))
+                })?);
             }
             "--at" => out.at = Some(number(&value("--at")?, "--at")?),
             "--len" => out.len = Some(number(&value("--len")?, "--len")?),
@@ -449,6 +466,74 @@ fn strings_cmd(args: &[String]) -> Result<(), Fail> {
     } else {
         Ok(())
     }
+}
+
+// --- entropy ----------------------------------------------------------------
+
+/// The eight block glyphs, so a whole file's entropy fits on one terminal line.
+const SPARK: [char; 8] = ['▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'];
+
+fn entropy_cmd(args: &[String]) -> Result<(), Fail> {
+    let args = parse_args(args)?;
+    let [path] = args.positional.as_slice() else {
+        return Err(Fail::Usage("entropy takes one file".into()));
+    };
+    let bytes = read_file(path)?;
+    let (region, at) = region(&bytes, &args);
+    let buckets = args.buckets.unwrap_or(64).max(1);
+    let values = analysis::entropy(region, buckets);
+    if values.is_empty() {
+        if !args.quiet && !args.json {
+            println!("nothing to measure at {at:#x}");
+        }
+        return Err(Fail::Mismatch);
+    }
+    // `entropy` returns fewer buckets than asked for when the region is shorter
+    // than that, so the width each value covers comes from what came back.
+    let width = region.len() / values.len();
+
+    if args.json {
+        println!(
+            "{}",
+            serde_json::json!({
+                "offset": at,
+                "len": region.len(),
+                "bucket_bytes": width,
+                "values": values,
+            })
+        );
+        return Ok(());
+    }
+    if args.quiet {
+        return Ok(());
+    }
+
+    let strip: String = values
+        .iter()
+        .map(|v| SPARK[((v * 8.0) as usize).min(7)])
+        .collect();
+    let mean = values.iter().sum::<f32>() / values.len() as f32;
+    let (peak_index, peak) = values
+        .iter()
+        .enumerate()
+        .max_by(|a, b| a.1.total_cmp(b.1))
+        .expect("values is not empty");
+    println!(
+        "{at:#010x} +{} — {} bucket(s) of {width} byte(s)",
+        region.len(),
+        values.len()
+    );
+    println!("{strip}");
+    println!(
+        "mean {mean:.2}, peak {peak:.2} at {:#x}",
+        at + (peak_index * width) as u64
+    );
+    // Entropy this close to 1.0 is the signature of data that is already
+    // compressed or encrypted, which is usually the region worth opening first.
+    if *peak > 0.95 {
+        println!("the peak looks compressed or encrypted");
+    }
+    Ok(())
 }
 
 // --- hints ------------------------------------------------------------------

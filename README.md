@@ -214,6 +214,7 @@ nybble parse schemas/png.schema shot.png --json   # pipe it into jq
 nybble diff before.sav after.sav                  # what changed
 nybble detect firmware.bin                        # what is this?
 nybble strings firmware.bin --min 6               # the readable text in it
+nybble entropy firmware.bin                       # where is the packed data?
 nybble hints firmware.bin --at 0x4000             # what shape are these bytes?
 nybble check my.schema                            # does my schema compile?
 ```

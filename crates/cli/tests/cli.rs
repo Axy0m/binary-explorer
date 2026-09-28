@@ -184,6 +184,42 @@ fn strings_lists_readable_runs_at_their_file_offsets() {
 }
 
 #[test]
+fn entropy_separates_a_packed_region_from_a_flat_one() {
+    // Half padding, half a spread of every byte value: the strip should be low
+    // on the left and high on the right, and the peak should land in the noise.
+    let mut bytes = vec![0x00u8; 4096];
+    bytes.extend((0..4096).map(|i| (i * 7 % 256) as u8));
+    let file = fixture("entropy.bin", &bytes);
+    let path = file.to_str().unwrap();
+
+    let out = nybble(&["entropy", path, "--buckets", "8"]);
+    assert_eq!(code(&out), 0);
+    let text = stdout(&out);
+    assert!(text.contains("8 bucket(s) of 1024 byte(s)"), "{text}");
+    assert!(text.contains("▁▁▁▁████"), "flat first, packed second: {text}");
+    // Every bucket in the noise half scores 1.00, so only the half is pinned.
+    assert!(text.contains("peak 1.00 at 0x1"), "{text}");
+
+    let out = nybble(&["entropy", path, "--buckets", "4", "--json"]);
+    let text = stdout(&out);
+    let values: Vec<f32> = text
+        .split("\"values\":[")
+        .nth(1)
+        .and_then(|t| t.split(']').next())
+        .expect("json should carry the values")
+        .split(',')
+        .map(|v| v.parse().expect("each value should be a number"))
+        .collect();
+    assert_eq!(values.len(), 4);
+    assert!(values[0] < 0.1, "padding is not random: {values:?}");
+    assert!(values[3] > 0.9, "a full byte spread is: {values:?}");
+
+    // Nothing to measure is a mismatch, not an error.
+    let empty = fixture("entropy_empty.bin", &[]);
+    assert_eq!(code(&nybble(&["entropy", empty.to_str().unwrap()])), 1);
+}
+
+#[test]
 fn usage_errors_are_distinguishable_from_mismatches() {
     // Exit 2 means "you held it wrong", so a script can tell a bad invocation
     // apart from a file that simply did not match.
