@@ -68,6 +68,51 @@ fn small_integers_are_not_called_timestamps() {
 }
 
 #[test]
+fn guess_reads_a_windows_filetime() {
+    // 2023-11-14 22:13:20 UTC as 100-nanosecond ticks since 1601: the same
+    // instant as the Unix timestamp above, in the encoding Windows writes.
+    let ticks: u64 = (1_700_000_000 + 11_644_473_600) * 10_000_000;
+    let guesses = analyze_at(&ticks.to_le_bytes(), 0);
+    let hit = guesses
+        .iter()
+        .find(|g| g.label.starts_with("Windows FILETIME"))
+        .unwrap_or_else(|| panic!("expected a FILETIME guess, got {guesses:?}"));
+    assert!(hit.detail.starts_with("2023-11-14 22:13:20"), "got {:?}", hit.detail);
+}
+
+#[test]
+fn guess_reads_a_millisecond_timestamp() {
+    // The same instant again, in the milliseconds a JVM or a browser writes.
+    let millis: u64 = 1_700_000_000_000;
+    let guesses = analyze_at(&millis.to_le_bytes(), 0);
+    let hit = guesses
+        .iter()
+        .find(|g| g.label.contains("milliseconds"))
+        .unwrap_or_else(|| panic!("expected a millisecond guess, got {guesses:?}"));
+    assert!(hit.detail.starts_with("2023-11-14"), "got {:?}", hit.detail);
+}
+
+#[test]
+fn guess_reads_an_ms_dos_packed_date() {
+    // 2023-11-14 22:13:20, packed the way a ZIP entry carries it.
+    let packed: u32 = 0x576E_B1AA;
+    let guesses = analyze_at(&packed.to_le_bytes(), 0);
+    let hit = guesses
+        .iter()
+        .find(|g| g.label.starts_with("MS-DOS"))
+        .unwrap_or_else(|| panic!("expected a DOS date guess, got {guesses:?}"));
+    assert_eq!(hit.detail, "2023-11-14 22:13:20");
+}
+
+#[test]
+fn an_impossible_dos_date_is_not_offered() {
+    // Month 15 and hour 31: the bit fields decode, the date does not exist.
+    let packed: u32 = 0xFFFF_FFFF;
+    let guesses = analyze_at(&packed.to_le_bytes(), 0);
+    assert!(guesses.iter().all(|g| !g.label.starts_with("MS-DOS")), "{guesses:?}");
+}
+
+#[test]
 fn guess_flags_a_uuid() {
     // A v4 UUID: version nibble (byte 6 high) = 4.
     let bytes = [

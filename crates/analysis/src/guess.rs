@@ -3,7 +3,7 @@
 
 use serde::Serialize;
 
-use crate::dates::format_unix;
+use crate::dates::{format_dos, format_unix};
 use crate::strings::is_printable_run;
 
 /// A single semantic guess about the bytes at an offset.
@@ -21,6 +21,13 @@ pub struct Guess {
 const PLAUSIBLE_MIN: i64 = 1_000_000_000; // 2001-09-09
 const PLAUSIBLE_MAX_32: i64 = 2_147_483_647; // i32::MAX (2038)
 const PLAUSIBLE_MAX_64: i64 = 4_102_444_800; // 2100-01-01
+
+// A Windows FILETIME counts 100-nanosecond ticks from 1601-01-01 UTC. It is the
+// stamp on every NTFS entry, PE debug directory, registry hive, and event log
+// record, so a 64-bit number in a Windows-shaped file is more often one of
+// these than a Unix time.
+const FILETIME_TICKS_PER_SECOND: u64 = 10_000_000;
+const FILETIME_EPOCH_TO_UNIX: i64 = 11_644_473_600; // seconds from 1601 to 1970
 
 /// Produce guesses for the bytes starting at `offset`.
 pub fn analyze_at(bytes: &[u8], offset: usize) -> Vec<Guess> {
@@ -54,17 +61,42 @@ pub fn analyze_at(bytes: &[u8], offset: usize) -> Vec<Guess> {
         }
     }
 
-    // 64-bit Unix timestamps (seconds).
+    // An MS-DOS packed date/time, as carried by ZIP entries and FAT directories.
+    if let Some(b) = rest.get(0..4) {
+        let arr = [b[0], b[1], b[2], b[3]];
+        if let Some(date) = format_dos(u32::from_le_bytes(arr)) {
+            guesses.push(Guess {
+                label: "MS-DOS date/time (u32 LE)".into(),
+                detail: date,
+            });
+        }
+    }
+
+    // 64-bit numbers that are a time in one of the three common encodings:
+    // seconds, milliseconds, or Windows' 100-nanosecond ticks from 1601.
     if let Some(b) = rest.get(0..8) {
         let arr: [u8; 8] = b.try_into().unwrap();
-        for (order, secs) in [
-            ("u64 LE", u64::from_le_bytes(arr) as i64),
-            ("u64 BE", u64::from_be_bytes(arr) as i64),
+        for (order, raw) in [
+            ("u64 LE", u64::from_le_bytes(arr)),
+            ("u64 BE", u64::from_be_bytes(arr)),
         ] {
-            if (PLAUSIBLE_MIN..=PLAUSIBLE_MAX_64).contains(&secs) {
+            let readings = [
+                ("seconds", raw as i64),
+                ("milliseconds", (raw / 1_000) as i64),
+            ];
+            for (unit, secs) in readings {
+                if (PLAUSIBLE_MIN..=PLAUSIBLE_MAX_64).contains(&secs) {
+                    guesses.push(Guess {
+                        label: format!("Unix timestamp ({order}, {unit})"),
+                        detail: format_unix(secs),
+                    });
+                }
+            }
+            let filetime = (raw / FILETIME_TICKS_PER_SECOND) as i64 - FILETIME_EPOCH_TO_UNIX;
+            if (PLAUSIBLE_MIN..=PLAUSIBLE_MAX_64).contains(&filetime) {
                 guesses.push(Guess {
-                    label: format!("Unix timestamp ({order}, seconds)"),
-                    detail: format_unix(secs),
+                    label: format!("Windows FILETIME ({order})"),
+                    detail: format_unix(filetime),
                 });
             }
         }

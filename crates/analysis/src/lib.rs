@@ -5,7 +5,8 @@
 //! * [`find_strings`] scans for runs of readable text (ASCII and UTF-16LE) —
 //!   names, paths, and tags usually jump straight out of a binary this way.
 //! * [`analyze_at`] answers "what could the bytes here be?" for one offset:
-//!   a string, a Unix timestamp, a UUID, and so on — always framed as guesses.
+//!   a string, a time in any of the encodings that are actually used, a UUID,
+//!   and so on — always framed as guesses.
 //! * [`infer`] answers the shape question for a whole region: is there a
 //!   repeating record here, a table of offsets, a string pool, or padding?
 //!

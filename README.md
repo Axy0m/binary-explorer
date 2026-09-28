@@ -94,7 +94,9 @@ GzModule
 - Recompute stale checksums in one click, so an edited file still opens
 - Diff against a second file: changed bytes marked in the hex view, changed
   fields shown as `old → new` in the parse tree
-- Entropy strip, string extraction, timestamp detection, format guessing
+- Entropy strip, string extraction, format guessing
+- Timestamp detection across the encodings that are actually used: Unix
+  seconds and milliseconds, Windows FILETIME, MS-DOS packed dates
 - Automatic format detection on open
 
 **Formats & sharing**
