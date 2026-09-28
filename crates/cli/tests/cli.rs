@@ -152,6 +152,38 @@ fn detect_identifies_a_png_and_gives_up_on_noise() {
 }
 
 #[test]
+fn strings_lists_readable_runs_at_their_file_offsets() {
+    // Two words buried in binary noise, the second past a `--at` boundary, so
+    // the offsets have to come back as file positions and not region ones.
+    let mut bytes = vec![0x00u8; 16];
+    bytes.extend_from_slice(b"version");
+    bytes.extend_from_slice(&[0xFF; 8]);
+    bytes.extend_from_slice(b"payload");
+    let file = fixture("strings.bin", &bytes);
+    let path = file.to_str().unwrap();
+
+    let out = nybble(&["strings", path]);
+    assert_eq!(code(&out), 0);
+    let text = stdout(&out);
+    assert!(text.contains("0x00000010"), "{text}");
+    assert!(text.contains("version"), "{text}");
+    assert!(text.contains("payload"), "{text}");
+
+    // Skipping the first run drops it from the listing but keeps the offsets.
+    let out = nybble(&["strings", path, "--at", "0x17"]);
+    let text = stdout(&out);
+    assert!(!text.contains("version"), "{text}");
+    assert!(text.contains("0x0000001f"), "{text}");
+
+    // A floor above the longest run leaves nothing to report.
+    assert_eq!(
+        code(&nybble(&["strings", path, "--min", "20"])),
+        1,
+        "a file with no strings that long should exit 1"
+    );
+}
+
+#[test]
 fn usage_errors_are_distinguishable_from_mismatches() {
     // Exit 2 means "you held it wrong", so a script can tell a bad invocation
     // apart from a file that simply did not match.

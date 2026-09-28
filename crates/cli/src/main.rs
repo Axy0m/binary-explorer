@@ -10,6 +10,7 @@
 //! nybble parse schemas/png.schema shot.png --json # pipe it into jq
 //! nybble diff before.sav after.sav                # changed regions
 //! nybble detect firmware.bin                      # what is this?
+//! nybble strings firmware.bin --min 6          # readable text, with offsets
 //! nybble hints firmware.bin --at 0x4000           # what shape are these bytes?
 //! nybble check my.schema                          # does the schema compile?
 //! ```
@@ -28,6 +29,7 @@ USAGE:
     nybble parse <schema> <file> [options]   run a schema over a file
     nybble diff <a> <b> [options]            compare two files, byte-aligned
     nybble detect <file>                     identify a format from its magic bytes
+    nybble strings <file> [options]          list the readable text in a file
     nybble hints <file> [options]            guess the shape of a region of bytes
     nybble check <schema>                    validate that a schema compiles
 
@@ -40,6 +42,13 @@ PARSE OPTIONS:
 DIFF OPTIONS:
     --limit <n>      how many changed regions to list (default 20)
     --json           emit the summary and regions as JSON
+
+STRINGS OPTIONS:
+    --min <n>        shortest run to report, in characters (default 4)
+    --at <offset>    where to start looking (decimal or 0x…; default 0)
+    --len <n>        how many bytes to look at (default: to the end)
+    --limit <n>      how many strings to list (default: all)
+    --json           emit the strings as JSON
 
 HINTS OPTIONS:
     --at <offset>    where to start looking (decimal or 0x…; default 0)
@@ -61,6 +70,7 @@ fn main() -> ExitCode {
         "parse" => parse_cmd(rest),
         "diff" => diff_cmd(rest),
         "detect" => detect_cmd(rest),
+        "strings" => strings_cmd(rest),
         "hints" => hints_cmd(rest),
         "check" => check_cmd(rest),
         "-h" | "--help" | "help" => {
@@ -104,6 +114,7 @@ struct Args {
     entry: Option<String>,
     endian: Option<String>,
     limit: Option<usize>,
+    min: Option<usize>,
     at: Option<u64>,
     len: Option<u64>,
 }
@@ -116,6 +127,7 @@ fn parse_args(args: &[String]) -> Result<Args, Fail> {
         entry: None,
         endian: None,
         limit: None,
+        min: None,
         at: None,
         len: None,
     };
@@ -138,6 +150,13 @@ fn parse_args(args: &[String]) -> Result<Args, Fail> {
                 out.limit = Some(
                     raw.parse()
                         .map_err(|_| Fail::Usage(format!("--limit wants a number, got `{raw}`")))?,
+                );
+            }
+            "--min" => {
+                let raw = value("--min")?;
+                out.min = Some(
+                    raw.parse()
+                        .map_err(|_| Fail::Usage(format!("--min wants a number, got `{raw}`")))?,
                 );
             }
             "--at" => out.at = Some(number(&value("--at")?, "--at")?),
@@ -163,6 +182,16 @@ fn number(raw: &str, flag: &str) -> Result<u64, Fail> {
 
 fn read_file(path: &str) -> Result<Vec<u8>, Fail> {
     std::fs::read(path).map_err(|e| Fail::Error(format!("{path}: {e}")))
+}
+
+/// The slice `--at` and `--len` select, plus the file offset it starts at. Both
+/// bounds are clamped to the file, so pointing past the end yields an empty
+/// region rather than an error — the answer to "what is out there?" is "nothing".
+fn region<'a>(bytes: &'a [u8], args: &Args) -> (&'a [u8], u64) {
+    let total = bytes.len() as u64;
+    let at = args.at.unwrap_or(0).min(total);
+    let end = args.len.map_or(total, |n| at.saturating_add(n).min(total));
+    (&bytes[at as usize..end as usize], at)
 }
 
 // --- parse ------------------------------------------------------------------
@@ -366,6 +395,62 @@ fn detect_cmd(args: &[String]) -> Result<(), Fail> {
     }
 }
 
+// --- strings ----------------------------------------------------------------
+
+fn strings_cmd(args: &[String]) -> Result<(), Fail> {
+    let args = parse_args(args)?;
+    let [path] = args.positional.as_slice() else {
+        return Err(Fail::Usage("strings takes one file".into()));
+    };
+    let bytes = read_file(path)?;
+    let (region, at) = region(&bytes, &args);
+    // Four characters is the same floor the app's string panel uses: short
+    // enough to catch a four-letter tag, long enough that binary data does not
+    // fill the list with accidents.
+    let hits = analysis::find_strings(region, args.min.unwrap_or(4));
+    let listed = args.limit.unwrap_or(hits.len()).min(hits.len());
+
+    if args.json {
+        // Offsets are relative to the region the scanner saw, so shift them back
+        // to where they are in the file before anything downstream reads them.
+        let out: Vec<_> = hits
+            .iter()
+            .take(listed)
+            .map(|h| {
+                serde_json::json!({
+                    "offset": at + h.offset as u64,
+                    "len": h.len,
+                    "encoding": h.encoding,
+                    "text": h.text,
+                })
+            })
+            .collect();
+        println!(
+            "{}",
+            serde_json::to_string(&out).map_err(|e| Fail::Error(e.to_string()))?
+        );
+    } else if !args.quiet {
+        if hits.is_empty() {
+            println!("no strings in {} byte(s) at {at:#x}", region.len());
+        }
+        for hit in hits.iter().take(listed) {
+            let encoding = match hit.encoding {
+                analysis::Encoding::Ascii => "ascii",
+                analysis::Encoding::Utf16Le => "utf16le",
+            };
+            println!("{:#010x} +{:<6} {encoding:<8} {}", at + hit.offset as u64, hit.len, hit.text);
+        }
+        if hits.len() > listed {
+            println!("  … {} more string(s)", hits.len() - listed);
+        }
+    }
+    if hits.is_empty() {
+        Err(Fail::Mismatch)
+    } else {
+        Ok(())
+    }
+}
+
 // --- hints ------------------------------------------------------------------
 
 fn hints_cmd(args: &[String]) -> Result<(), Fail> {
@@ -375,12 +460,7 @@ fn hints_cmd(args: &[String]) -> Result<(), Fail> {
     };
     let bytes = read_file(path)?;
     let total = bytes.len() as u64;
-    let at = args.at.unwrap_or(0).min(total);
-    let end = args
-        .len
-        .map(|n| (at + n).min(total))
-        .unwrap_or(total);
-    let region = &bytes[at as usize..end as usize];
+    let (region, at) = region(&bytes, &args);
     let hints = analysis::infer(region, at, total);
 
     if args.json {
