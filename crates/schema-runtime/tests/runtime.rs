@@ -1167,6 +1167,20 @@ fn adler32_and_xor8_are_available() {
 }
 
 #[test]
+fn a_crc16_field_is_checked_against_the_bytes_it_covers() {
+    // Two bytes of payload and the CRC-16/CCITT over them, the shape a serial
+    // protocol or an instrument dump usually carries. Stored big-endian, the way
+    // those formats write it, so the per-field override is exercised too.
+    let src = "struct S { data u16  crc u16be check crc16_ccitt over(data) }";
+    let mut bytes = vec![0x12, 0x34];
+    bytes.extend_from_slice(&0x0EC9u16.to_be_bytes()); // CCITT-FALSE over 12 34
+    let root = run(src, "S", bytes, Endian::Little);
+    let check = child(&root, "crc").check.as_ref().unwrap().clone();
+    assert!(check.ok, "{check:?}");
+    assert_eq!(check.algo, "crc16_ccitt");
+}
+
+#[test]
 fn each_repeated_chunk_is_checked_against_its_own_bytes() {
     // The PNG shape: a CRC per chunk, inside a `repeat`. Each verdict must cover
     // that chunk's own span rather than the first one's.

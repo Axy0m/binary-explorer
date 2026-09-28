@@ -714,7 +714,18 @@ fn check_without_over_is_rejected() {
 
 #[test]
 fn every_checksum_name_round_trips() {
-    for name in ["crc32", "adler32", "sum8", "sum16", "sum32", "xor8"] {
+    for name in [
+        "crc32",
+        "crc16",
+        "crc16_modbus",
+        "crc16_ccitt",
+        "crc16_xmodem",
+        "adler32",
+        "sum8",
+        "sum16",
+        "sum32",
+        "xor8",
+    ] {
         let src = format!("struct S {{ d bytes[4]  c u32 check {name} over(d) }}");
         let schema = parse(&src).unwrap_or_else(|e| panic!("{name} should parse: {e}"));
         let algo = schema.structs[0].fields[1].check.as_ref().unwrap().algo;

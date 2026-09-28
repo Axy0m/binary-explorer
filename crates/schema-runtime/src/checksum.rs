@@ -4,8 +4,8 @@
 //! store, widened to `u64` so the runtime can compare it against a field of any
 //! integer width. All of these are small and self-contained on purpose: the
 //! point of the clause is to validate (and repair) the checksums that ordinary
-//! binary formats carry, which are almost always CRC-32, Adler-32, or a plain
-//! additive/XOR fold.
+//! binary formats carry, which are almost always a CRC (32- or 16-bit),
+//! Adler-32, or a plain additive/XOR fold.
 
 use schema::Checksum;
 
@@ -14,6 +14,10 @@ pub fn compute(algo: Checksum, bytes: &[u8]) -> u64 {
     match algo {
         Checksum::Crc32 => crc32(bytes) as u64,
         Checksum::Adler32 => adler32(bytes) as u64,
+        Checksum::Crc16 => crc16_reflected(bytes, 0x0000) as u64,
+        Checksum::Crc16Modbus => crc16_reflected(bytes, 0xFFFF) as u64,
+        Checksum::Crc16Ccitt => crc16_ccitt(bytes, 0xFFFF) as u64,
+        Checksum::Crc16Xmodem => crc16_ccitt(bytes, 0x0000) as u64,
         Checksum::Sum8 => sum(bytes) as u8 as u64,
         Checksum::Sum16 => sum(bytes) as u16 as u64,
         Checksum::Sum32 => sum(bytes) as u32 as u64,
@@ -54,7 +58,66 @@ pub fn adler32(bytes: &[u8]) -> u32 {
     (b << 16) | a
 }
 
+/// CRC-16 over the reflected `0x8005` polynomial. Init `0x0000` is the variant
+/// catalogued as CRC-16/ARC and written as plain "CRC-16" nearly everywhere;
+/// init `0xFFFF` is Modbus. Nothing else separates the two.
+pub fn crc16_reflected(bytes: &[u8], init: u16) -> u16 {
+    let mut crc = init;
+    for b in bytes {
+        crc = CRC16_REFLECTED_TABLE[((crc ^ *b as u16) & 0xFF) as usize] ^ (crc >> 8);
+    }
+    crc
+}
+
+/// CRC-16 over the un-reflected `0x1021` polynomial, most significant bit
+/// first. Init `0xFFFF` is the variant datasheets call CCITT (catalogued as
+/// CRC-16/IBM-3740, or "CCITT-FALSE"); init `0x0000` is XMODEM.
+pub fn crc16_ccitt(bytes: &[u8], init: u16) -> u16 {
+    let mut crc = init;
+    for b in bytes {
+        let index = (((crc >> 8) ^ *b as u16) & 0xFF) as usize;
+        crc = CRC16_CCITT_TABLE[index] ^ (crc << 8);
+    }
+    crc
+}
+
 static CRC32_TABLE: [u32; 256] = crc32_table();
+static CRC16_REFLECTED_TABLE: [u16; 256] = crc16_reflected_table();
+static CRC16_CCITT_TABLE: [u16; 256] = crc16_ccitt_table();
+
+const fn crc16_reflected_table() -> [u16; 256] {
+    let mut table = [0u16; 256];
+    let mut i = 0usize;
+    while i < 256 {
+        let mut c = i as u16;
+        let mut bit = 0;
+        while bit < 8 {
+            // 0xA001 is 0x8005 with its bits reversed, which is what reflecting
+            // the input lets us use.
+            c = if c & 1 != 0 { 0xA001 ^ (c >> 1) } else { c >> 1 };
+            bit += 1;
+        }
+        table[i] = c;
+        i += 1;
+    }
+    table
+}
+
+const fn crc16_ccitt_table() -> [u16; 256] {
+    let mut table = [0u16; 256];
+    let mut i = 0usize;
+    while i < 256 {
+        let mut c = (i as u16) << 8;
+        let mut bit = 0;
+        while bit < 8 {
+            c = if c & 0x8000 != 0 { (c << 1) ^ 0x1021 } else { c << 1 };
+            bit += 1;
+        }
+        table[i] = c;
+        i += 1;
+    }
+    table
+}
 
 const fn crc32_table() -> [u32; 256] {
     let mut table = [0u32; 256];
@@ -89,6 +152,26 @@ mod tests {
         assert_eq!(crc32(b"123456789"), 0xCBF4_3926);
         assert_eq!(crc32(b""), 0);
         assert_eq!(crc32(b"a"), 0xE8B7_BE43);
+    }
+
+    // Every CRC-16 in the catalogue is published with its check value: the CRC
+    // of the ASCII digits "123456789". Four variants, four known answers — the
+    // one test that catches a wrong polynomial, a missed reflection, or an init
+    // copied from the neighbouring row of the table.
+    #[test]
+    fn crc16_variants_match_their_published_check_values() {
+        assert_eq!(compute(Checksum::Crc16, b"123456789"), 0xBB3D);
+        assert_eq!(compute(Checksum::Crc16Modbus, b"123456789"), 0x4B37);
+        assert_eq!(compute(Checksum::Crc16Ccitt, b"123456789"), 0x29B1);
+        assert_eq!(compute(Checksum::Crc16Xmodem, b"123456789"), 0x31C3);
+    }
+
+    #[test]
+    fn crc16_of_nothing_is_the_initial_value() {
+        assert_eq!(compute(Checksum::Crc16, b""), 0x0000);
+        assert_eq!(compute(Checksum::Crc16Modbus, b""), 0xFFFF);
+        assert_eq!(compute(Checksum::Crc16Ccitt, b""), 0xFFFF);
+        assert_eq!(compute(Checksum::Crc16Xmodem, b""), 0x0000);
     }
 
     #[test]

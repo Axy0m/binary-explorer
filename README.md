@@ -77,7 +77,8 @@ GzModule
 - Per-field byte order — `u32be` / `f64le` override the schema default, for the
   formats that mix the two
 - Checksums — `check crc32 over(chunkType .. data)` validates a field against the
-  bytes it covers (`crc32`, `adler32`, `sum8/16/32`, `xor8`)
+  bytes it covers (`crc32`, `crc16` and its Modbus / CCITT / XMODEM
+  variants, `adler32`, `sum8/16/32`, `xor8`)
 
 **Knowing what you don't know yet**
 - Every parse reports how much of the file it actually explained, and the file

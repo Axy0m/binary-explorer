@@ -211,6 +211,16 @@ pub enum Checksum {
     Crc32,
     /// Adler-32, as carried in a zlib stream trailer.
     Adler32,
+    /// CRC-16/ARC (reflected `0x8005`, init 0) — the plain "CRC-16" of most
+    /// firmware and instrument protocols.
+    Crc16,
+    /// CRC-16/MODBUS: the same polynomial, init `0xFFFF`.
+    Crc16Modbus,
+    /// CRC-16/CCITT-FALSE (`0x1021`, init `0xFFFF`) — the one usually meant by
+    /// "CCITT" in a datasheet, despite the name.
+    Crc16Ccitt,
+    /// CRC-16/XMODEM: the same polynomial, init 0.
+    Crc16Xmodem,
     /// Sum of the covered bytes, truncated to 8 / 16 / 32 bits. Ubiquitous in
     /// firmware, boot sectors, and hand-rolled save formats.
     Sum8,
@@ -226,6 +236,10 @@ impl Checksum {
         match self {
             Checksum::Crc32 => "crc32",
             Checksum::Adler32 => "adler32",
+            Checksum::Crc16 => "crc16",
+            Checksum::Crc16Modbus => "crc16_modbus",
+            Checksum::Crc16Ccitt => "crc16_ccitt",
+            Checksum::Crc16Xmodem => "crc16_xmodem",
             Checksum::Sum8 => "sum8",
             Checksum::Sum16 => "sum16",
             Checksum::Sum32 => "sum32",
@@ -238,6 +252,10 @@ impl Checksum {
         Some(match word {
             "crc32" => Checksum::Crc32,
             "adler32" => Checksum::Adler32,
+            "crc16" => Checksum::Crc16,
+            "crc16_modbus" => Checksum::Crc16Modbus,
+            "crc16_ccitt" => Checksum::Crc16Ccitt,
+            "crc16_xmodem" => Checksum::Crc16Xmodem,
             "sum8" => Checksum::Sum8,
             "sum16" => Checksum::Sum16,
             "sum32" => Checksum::Sum32,
