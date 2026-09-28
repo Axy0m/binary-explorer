@@ -36,8 +36,9 @@ struct Signature {
     parts: &'static [(usize, &'static [u8])],
 }
 
-/// The signature registry. Kept deliberately small and high-quality, per the
-/// plan ("a small number of excellent implementations is better").
+/// The signature registry. Kept to signatures that are exact and anchored: a
+/// magic number at a known offset, never a heuristic over the body. A format
+/// whose only tell is statistical belongs in the analysis crate, not here.
 const SIGNATURES: &[Signature] = &[
     Signature {
         format: "PNG",
@@ -97,6 +98,32 @@ const SIGNATURES: &[Signature] = &[
         parts: &[(0, &[0xCF, 0xFA, 0xED, 0xFE])],
     },
     Signature {
+        format: "Mach-O",
+        extension: "dylib",
+        description: "Mach-O executable (32-bit, macOS/iOS)",
+        confidence: 100,
+        // 0xFEEDFACE stored little-endian.
+        parts: &[(0, &[0xCE, 0xFA, 0xED, 0xFE])],
+    },
+    Signature {
+        format: "Mach-O fat",
+        extension: "dylib",
+        // Byte-for-byte the same magic as a Java class file; both are reported
+        // and neither claims certainty, because at four bytes there is nothing
+        // to tell them apart. The next word decides: a slice count in one, a
+        // class-file version in the other.
+        description: "Mach-O universal binary — or a Java class (same magic)",
+        confidence: 60,
+        parts: &[(0, &[0xCA, 0xFE, 0xBA, 0xBE])],
+    },
+    Signature {
+        format: "PCAPNG",
+        extension: "pcapng",
+        description: "pcapng packet capture (Section Header Block)",
+        confidence: 100,
+        parts: &[(0, &[0x0A, 0x0D, 0x0D, 0x0A])],
+    },
+    Signature {
         format: "PCAP",
         extension: "pcap",
         description: "libpcap / tcpdump packet capture",
@@ -117,6 +144,43 @@ const SIGNATURES: &[Signature] = &[
         description: "gzip-compressed data",
         confidence: 95,
         parts: &[(0, &[0x1F, 0x8B])],
+    },
+    Signature {
+        format: "XZ",
+        extension: "xz",
+        description: "xz-compressed data",
+        confidence: 100,
+        parts: &[(0, &[0xFD, 0x37, 0x7A, 0x58, 0x5A, 0x00])],
+    },
+    Signature {
+        format: "BZIP2",
+        extension: "bz2",
+        description: "bzip2-compressed data",
+        confidence: 85,
+        parts: &[(0, b"BZh")],
+    },
+    Signature {
+        format: "ZSTD",
+        extension: "zst",
+        description: "Zstandard-compressed data",
+        confidence: 100,
+        // 0xFD2FB528 stored little-endian.
+        parts: &[(0, &[0x28, 0xB5, 0x2F, 0xFD])],
+    },
+    Signature {
+        format: "LZ4",
+        extension: "lz4",
+        description: "LZ4 frame",
+        confidence: 95,
+        // 0x184D2204 stored little-endian.
+        parts: &[(0, &[0x04, 0x22, 0x4D, 0x18])],
+    },
+    Signature {
+        format: "CAB",
+        extension: "cab",
+        description: "Microsoft Cabinet archive",
+        confidence: 95,
+        parts: &[(0, b"MSCF")],
     },
     Signature {
         format: "7-Zip",
@@ -154,6 +218,42 @@ const SIGNATURES: &[Signature] = &[
         parts: &[(0, b"RIFF"), (8, b"AVI ")],
     },
     Signature {
+        format: "WebP",
+        extension: "webp",
+        description: "WebP image (RIFF)",
+        confidence: 100,
+        parts: &[(0, b"RIFF"), (8, b"WEBP")],
+    },
+    Signature {
+        format: "MP4",
+        extension: "mp4",
+        description: "ISO base media file (MP4/MOV/HEIF)",
+        confidence: 90,
+        // The box length comes first; `ftyp` is what actually identifies it.
+        parts: &[(4, b"ftyp")],
+    },
+    Signature {
+        format: "Matroska",
+        extension: "mkv",
+        description: "Matroska / WebM container (EBML)",
+        confidence: 90,
+        parts: &[(0, &[0x1A, 0x45, 0xDF, 0xA3])],
+    },
+    Signature {
+        format: "TIFF",
+        extension: "tif",
+        description: "TIFF image (little-endian)",
+        confidence: 90,
+        parts: &[(0, &[0x49, 0x49, 0x2A, 0x00])],
+    },
+    Signature {
+        format: "TIFF",
+        extension: "tif",
+        description: "TIFF image (big-endian)",
+        confidence: 90,
+        parts: &[(0, &[0x4D, 0x4D, 0x00, 0x2A])],
+    },
+    Signature {
         format: "MP3",
         extension: "mp3",
         description: "MP3 audio (ID3-tagged)",
@@ -175,6 +275,35 @@ const SIGNATURES: &[Signature] = &[
         parts: &[(0, b"fLaC")],
     },
     Signature {
+        format: "SquashFS",
+        extension: "squashfs",
+        description: "SquashFS filesystem image (little-endian)",
+        confidence: 100,
+        parts: &[(0, b"hsqs")],
+    },
+    Signature {
+        format: "SquashFS",
+        extension: "squashfs",
+        description: "SquashFS filesystem image (big-endian)",
+        confidence: 100,
+        parts: &[(0, b"sqsh")],
+    },
+    Signature {
+        format: "uImage",
+        extension: "img",
+        description: "Das U-Boot kernel image header",
+        confidence: 100,
+        // 0x27051956, stored big-endian as the header always is.
+        parts: &[(0, &[0x27, 0x05, 0x19, 0x56])],
+    },
+    Signature {
+        format: "DEX",
+        extension: "dex",
+        description: "Android Dalvik executable",
+        confidence: 100,
+        parts: &[(0, b"dex\n")],
+    },
+    Signature {
         format: "SQLite",
         extension: "sqlite",
         description: "SQLite 3 database",
@@ -191,8 +320,8 @@ const SIGNATURES: &[Signature] = &[
     Signature {
         format: "Java class",
         extension: "class",
-        description: "Java compiled class file",
-        confidence: 95,
+        description: "Java compiled class file — or a Mach-O fat binary (same magic)",
+        confidence: 60,
         parts: &[(0, &[0xCA, 0xFE, 0xBA, 0xBE])],
     },
 ];

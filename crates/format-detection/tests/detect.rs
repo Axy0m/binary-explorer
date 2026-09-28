@@ -48,6 +48,69 @@ fn tar_signature_is_deep_at_offset_257() {
 }
 
 #[test]
+fn detects_the_shapes_firmware_arrives_in() {
+    assert_eq!(detect(b"hsqs____")[0].format, "SquashFS");
+    assert_eq!(detect(b"sqsh____")[0].format, "SquashFS");
+    assert_eq!(detect(&[0x27, 0x05, 0x19, 0x56, 0, 0, 0, 0])[0].format, "uImage");
+    assert_eq!(detect(&[0x0A, 0x0D, 0x0D, 0x0A, 0, 0, 0, 0])[0].format, "PCAPNG");
+    assert_eq!(detect(b"dex\n035\0")[0].format, "DEX");
+}
+
+#[test]
+fn detects_the_modern_compressors() {
+    assert_eq!(detect(&[0x28, 0xB5, 0x2F, 0xFD, 0, 0])[0].format, "ZSTD");
+    assert_eq!(detect(&[0xFD, 0x37, 0x7A, 0x58, 0x5A, 0x00])[0].format, "XZ");
+    assert_eq!(detect(&[0x04, 0x22, 0x4D, 0x18, 0, 0])[0].format, "LZ4");
+    assert_eq!(detect(b"BZh91AY&SY")[0].format, "BZIP2");
+}
+
+#[test]
+fn an_iso_media_file_is_recognized_by_ftyp_past_its_length() {
+    // The first four bytes are the box length, so the signature has to be
+    // anchored at 4 rather than 0.
+    let mut mp4 = vec![0x00, 0x00, 0x00, 0x20];
+    mp4.extend_from_slice(b"ftypisom");
+    assert_eq!(detect(&mp4)[0].format, "MP4");
+    // The same bytes without `ftyp` where it belongs are not an MP4.
+    assert!(detect(&[0x00, 0x00, 0x00, 0x20, 0, 0, 0, 0]).is_empty());
+}
+
+#[test]
+fn a_cafebabe_file_reports_both_things_it_could_be() {
+    // A Mach-O universal binary and a Java class file share these four bytes
+    // exactly. Claiming either one outright would be a guess, so both are
+    // listed and neither is confident.
+    let hits = detect(&[0xCA, 0xFE, 0xBA, 0xBE, 0, 0, 0, 2]);
+    let names: Vec<&str> = hits.iter().map(|h| h.format).collect();
+    assert!(names.contains(&"Mach-O fat"), "{names:?}");
+    assert!(names.contains(&"Java class"), "{names:?}");
+    assert!(hits.iter().all(|h| h.confidence < 80), "neither is certain: {hits:?}");
+}
+
+#[test]
+fn a_riff_container_is_told_apart_by_its_fourth_word() {
+    let riff = |kind: &[u8]| {
+        let mut bytes = b"RIFF".to_vec();
+        bytes.extend_from_slice(&[0x24, 0x08, 0, 0]);
+        bytes.extend_from_slice(kind);
+        bytes
+    };
+    assert_eq!(detect(&riff(b"WEBP"))[0].format, "WebP");
+    assert_eq!(detect(&riff(b"WAVE"))[0].format, "WAV");
+    assert_eq!(detect(&riff(b"AVI "))[0].format, "AVI");
+}
+
+#[test]
+fn tiff_is_recognized_in_both_byte_orders() {
+    let le = detect(&[0x49, 0x49, 0x2A, 0x00, 8, 0, 0, 0]);
+    let be = detect(&[0x4D, 0x4D, 0x00, 0x2A, 0, 0, 0, 8]);
+    assert_eq!(le[0].format, "TIFF");
+    assert_eq!(be[0].format, "TIFF");
+    assert!(le[0].description.contains("little"), "{}", le[0].description);
+    assert!(be[0].description.contains("big"), "{}", be[0].description);
+}
+
+#[test]
 fn unknown_bytes_detect_nothing() {
     let noise = [0x00, 0x11, 0x22, 0x33, 0x44, 0x55];
     assert!(detect(&noise).is_empty());
